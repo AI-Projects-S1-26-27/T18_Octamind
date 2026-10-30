@@ -191,6 +191,7 @@ def run(
 
         print(f"[{name}] loading {path}")
         records = loader.load(path)
+        validate_records(records)  # fail before sampling can hide invalid records
         sampled = sample_records(
             records,
             per_hop=per_hop,
