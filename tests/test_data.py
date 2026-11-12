@@ -187,6 +187,37 @@ def test_musique_handles_duplicate_titles():
     assert validate_record(record) == []
 
 
+def test_musique_ids_unique_across_records():
+    # Real MuSiQue case: the same title carries different paragraphs in two questions.
+    a, b = musique_raw(hop=2), musique_raw(hop=2)
+    b["id"] = "q_other"
+    b["paragraphs"][0]["paragraph_text"] = "A different Alpha paragraph."
+    records = get_loader("musique").parse_records([a, b])
+    ids_a = {p.id: p.text for p in records[0].paragraphs}
+    ids_b = {p.id: p.text for p in records[1].paragraphs}
+
+    alpha_a = next(pid for pid in ids_a if pid.startswith("musique::Alpha"))
+    alpha_b = next(pid for pid in ids_b if pid.startswith("musique::Alpha"))
+    assert alpha_a != alpha_b and "#" in alpha_a and "#" in alpha_b
+    assert ids_a["musique::Beta"] == ids_b["musique::Beta"]      # same text keeps the clean id
+    # gold evidence and chain follow the rename
+    assert alpha_b in records[1].gold_evidence.paragraph_ids
+    assert records[1].gold_chain[0].support_paragraph_ids == (alpha_b,)
+    assert validate_records(records) == []
+
+
+def test_validation_catches_id_reused_for_different_text():
+    r1 = make_records(per_hop=1, hops=(2,))[0]
+    p = r1.paragraphs[0]
+    r2 = QuestionRecord(
+        question_id="other", dataset=r1.dataset, hop_level=2, question="Q?", answer="A",
+        paragraphs=[Paragraph(id=p.id, title=p.title, text=p.text + " changed")],
+        gold_evidence=GoldEvidence(paragraph_ids=(p.id,)),
+    )
+    errors = validate_records([r1, r2], strict=False)
+    assert any("different text in another record" in e for e in errors)
+
+
 # --------------------------------------------------------------------------- #
 # 2Wiki / HotpotQA
 # --------------------------------------------------------------------------- #
@@ -222,6 +253,21 @@ def test_hotpotqa_normalizes_schema():
 # --------------------------------------------------------------------------- #
 # Evidence helpers
 # --------------------------------------------------------------------------- #
+def test_hotpotqa_parquet_row_converts_to_native():
+    from data.convert_hotpotqa import to_native
+
+    row = {
+        "id": "hotpot-1", "question": "Which page links A and B?", "answer": "Y",
+        "type": "bridge", "level": "medium",
+        "supporting_facts": {"title": ["Page A", "Page B"], "sent_id": [0, 0]},
+        "context": {"title": ["Page A", "Page B"], "sentences": [["a0.", "a1."], ["b0."]]},
+    }
+    native = to_native(row)
+    assert native == hotpot_raw()
+    record = get_loader("hotpotqa").parse_records([native])[0]
+    assert validate_record(record) == []
+
+
 def test_make_gold_evidence_dedupes():
     evidence = make_gold_evidence(
         ["a", "a", "b"],
@@ -352,11 +398,11 @@ def test_repo_config_loads():
     assert set(config.datasets) == {"musique", "twiki", "hotpotqa"}
     assert config.datasets["musique"].enabled is True
     assert config.datasets["twiki"].enabled is True
-    # HotpotQA is temporarily disabled: no working public download source yet.
-    assert config.datasets["hotpotqa"].enabled is False
+    # HotpotQA is rebuilt from the HF parquet (data/convert_hotpotqa.py); no direct URL.
+    assert config.datasets["hotpotqa"].enabled is True
     assert config.datasets["hotpotqa"].url is None
     enabled = [name for name, ds in config.datasets.items() if ds.enabled]
-    assert enabled == ["musique", "twiki"]
+    assert enabled == ["musique", "twiki", "hotpotqa"]
     assert config.datasets["musique"].path.endswith("musique_ans_v1.0_dev.jsonl")
 
 

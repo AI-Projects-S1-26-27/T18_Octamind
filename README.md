@@ -2,7 +2,7 @@
 
 CS F407 / U407 Artificial Intelligence project, **Team 18 (Octamind)**, **Research** track, BITS Pilani Hyderabad Campus.
 
-> **Status: Week 1.** The proposal is written and the repository is being set up. Sections marked *planned* describe the design in our proposal and will be updated as code lands. What exists today: the traversal scaffold (`src/traversal/`), its tests on a toy graph, and the interface spec in `docs/INTERFACE.md`.
+> **Status (2026-11-12).** Done: data ingestion and fixed-seed sampling for all three datasets (Role 1, `data/`), and entity/concept extraction and linking (Role 2, `src/graph/`, see `docs/EXTRACTION.md`). In progress: relationship discovery and graph construction (Role 3), traversal (Role 5, scaffold in `src/traversal/`). Sections marked *planned* describe the design in our proposal.
 
 ## What this project is about
 
@@ -55,12 +55,10 @@ The heuristic `h` is not admissible, so it is used for ordering and pruning, not
 
 - **Datasets:** MuSiQue-Ans (2-, 3- and 4-hop), 2WikiMultiHopQA, HotpotQA. 200 sampled dev questions per hop level, fixed seed.
 
-> **Temporary data note (2026-10-21):** MuSiQue-Ans and 2WikiMultiHopQA are
-> downloaded and sampling works. **HotpotQA is temporarily disabled** in
-> `configs/data.yaml` because all official and mirror download links are
-> currently dead. The loader is implemented; we will revisit getting it online
-> later. See `docs/DATA_NOTES.md`.
-- **Models (fixed for every system):** Gemini Flash at temperature 0 (exact model version to be pinned in `configs/`), and Gemini Embedding 2.
+> **Data note:** all three datasets download and sample (HotpotQA is rebuilt from the official
+> HuggingFace parquet). Sources and commands: `docs/DATA_NOTES.md`.
+
+- **Models (fixed for every system):** Gemini Flash at temperature 0 (exact answer-model version to be pinned in `configs/`), and Gemini Embedding 2. Entity extraction (offline, Role 2) uses `gemini-3.5-flash-lite`, pinned in `configs/extraction.yaml`, because the free API tier allows only 20 Flash requests per day.
 - **Metrics:** EM and token-level F1; context tokens sent to the LLM; evidence recall and precision (mapped to source paragraphs); path recall where a verified gold chain exists; context reduction at matched accuracy; nodes expanded, peak frontier size and latency.
 - **Statistics:** paired bootstrap 95% confidence intervals.
 
@@ -72,7 +70,7 @@ octamind-graph-rag/
 ├── configs/             # all run settings (models, W, k, m, budgets, seeds)
 ├── data/                # dataset loaders and sampling (raw data is not committed)
 ├── src/
-│   ├── graph/           # extraction, entity linking, network construction, oracle graph (planned)
+│   ├── graph/           # entity extraction + linking (done); relations, network construction, oracle graph (planned)
 │   ├── query/           # query analysis and seed-entity identification (planned)
 │   ├── traversal/       # edge cost, weighted A*, beam search, context selection  <- scaffold exists
 │   ├── context/         # subgraph serialization, token budget, prompts (planned)
@@ -82,7 +80,9 @@ octamind-graph-rag/
 ├── tests/               # unit tests, including the Figure 1 toy graph
 ├── results/             # tables and figures
 └── docs/
-    ├── INTERFACE.md     # data contract between graph construction and traversal
+    ├── INTERFACE.md     # data contracts: paragraph ids, entities, edges, graph
+    ├── DATA_NOTES.md    # dataset sources and ingestion notes (Role 1)
+    ├── EXTRACTION.md    # entity extraction: how to run, results, limits (Role 2)
     ├── PROGRESS_LOG.md  # running log of work and decisions
     └── AI_USAGE.md      # AI-tool disclosure log
 ```
@@ -93,6 +93,8 @@ octamind-graph-rag/
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pytest
+python -m data.sampling                 # needs the raw files, see docs/DATA_NOTES.md
+python -m src.graph.run_extraction       # needs GEMINI_API_KEY in .env, see docs/EXTRACTION.md
 ```
 
 At this stage some traversal tests **fail on purpose** (`NotImplementedError`): they describe the behaviour of functions that are still to be written. API keys go in a local `.env` file, which is git-ignored and must never be committed. Every result in the report should be reproducible from a clean clone using a config file and a seed.

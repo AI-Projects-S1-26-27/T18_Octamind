@@ -25,7 +25,10 @@ Raw dataset files must never be committed: ``.gitignore`` keeps ``data/*`` out
 of git except for the loader code itself.
 
 Paragraph ids are ``"<dataset>::<title>"`` so the same source paragraph has the
-same id across questions; that makes them usable as edge provenance.
+same id across questions; that makes them usable as edge provenance. When one
+title carries different texts in the dataset, every variant gets
+``"<dataset>::<title>#<digest>"`` (see :func:`make_ids_globally_unique`), so an
+id always names exactly one text.
 """
 from __future__ import annotations
 
@@ -194,6 +197,64 @@ def make_paragraph(dataset: str, title: str, text: str, seen: dict) -> tuple:
     return paragraph, True
 
 
+def text_digest(text: str) -> str:
+    """Content hash used to tell apart paragraphs that share a title."""
+    return hashlib.sha1(str(text).encode("utf-8")).hexdigest()[:8]
+
+
+def make_ids_globally_unique(records: list) -> list:
+    """Make every paragraph id name exactly one text across the whole dataset.
+
+    :func:`make_paragraph` only sees one record, so a title that appears in two
+    questions with *different* text (MuSiQue often uses different paragraphs of
+    one article) would get the same ``<dataset>::<title>`` id in both, and
+    provenance by id would become ambiguous. Here every id that carries more
+    than one text is replaced, for all of its variants, by
+    ``<dataset>::<title>#<digest>``; ids with a single text keep the clean form.
+    Gold evidence and gold-chain ids are remapped to match.
+    """
+    texts = {}
+    for record in records:
+        for p in record.paragraphs:
+            texts.setdefault(p.id, set()).add(p.text)
+    ambiguous = {pid for pid, variants in texts.items() if len(variants) > 1}
+    if not ambiguous:
+        return records
+
+    for record in records:
+        remap = {}
+        paragraphs = []
+        for p in record.paragraphs:
+            if p.id in ambiguous:
+                new = Paragraph(id=f"{p.id}#{text_digest(p.text)}", title=p.title, text=p.text)
+                remap[p.id] = new.id
+                paragraphs.append(new)
+            else:
+                paragraphs.append(p)
+        if not remap:
+            continue
+        record.paragraphs = paragraphs
+        gold = record.gold_evidence
+        record.gold_evidence = GoldEvidence(
+            paragraph_ids=tuple(dedupe(remap.get(pid, pid) for pid in gold.paragraph_ids)),
+            sentence_facts=tuple(
+                {**f, "paragraph_id": remap.get(f.get("paragraph_id"), f.get("paragraph_id"))}
+                for f in gold.sentence_facts
+            ),
+        )
+        record.gold_chain = [
+            GoldStep(
+                step=s.step,
+                relation=s.relation,
+                tail=s.tail,
+                head=s.head,
+                support_paragraph_ids=tuple(remap.get(pid, pid) for pid in s.support_paragraph_ids),
+            )
+            for s in record.gold_chain
+        ]
+    return records
+
+
 def infer_hop(raw: dict, default: int = 2) -> int:
     """Read an explicit hop count if the dataset provides one."""
     for key in ("hop", "num_hops", "hop_level", "num_hop"):
@@ -309,7 +370,7 @@ class BaseLoader:
                 raise LoaderError(
                     f"{self.name}: failed to parse record {index}: {exc}"
                 ) from exc
-        return records
+        return make_ids_globally_unique(records)
 
     def parse_record(self, raw: dict, index: int) -> QuestionRecord:
         raise NotImplementedError

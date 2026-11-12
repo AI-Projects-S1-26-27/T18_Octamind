@@ -92,10 +92,22 @@ def validate_record(record: QuestionRecord, *, require_gold: bool = True) -> lis
 
 
 def validate_records(records: Iterable[QuestionRecord], *, strict: bool = True) -> list:
-    """Validate every record; raise :class:`EvidenceError` in strict mode."""
+    """Validate every record; raise :class:`EvidenceError` in strict mode.
+
+    Besides the per-record checks, a paragraph id must name the same text in
+    every record, otherwise edge provenance (a paragraph id) is ambiguous.
+    """
     all_errors = []
+    text_by_id = {}
     for record in records:
         all_errors.extend(validate_record(record))
+        for p in record.paragraphs:
+            first = text_by_id.setdefault(p.id, p.text)
+            if first != p.text:
+                all_errors.append(
+                    f"[{record.dataset}:{record.question_id}] paragraph id {p.id!r} "
+                    "has a different text in another record"
+                )
     if strict and all_errors:
         shown = "\n".join(f"  - {e}" for e in all_errors[:20])
         extra = "" if len(all_errors) <= 20 else f"\n  ... and {len(all_errors) - 20} more"

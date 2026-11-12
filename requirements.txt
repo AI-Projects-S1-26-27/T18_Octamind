@@ -1,3 +1,5 @@
 numpy
 pyyaml
 pytest
+google-genai
+pyarrow
