@@ -14,7 +14,7 @@ class EntityMatch:
 
     text: str
     normalized: str
-    entity_ids: tuple[str, ...]
+    entity_ids: tuple[str, ...]  # ranked candidates; no candidates are removed
     start: int
     end: int
 

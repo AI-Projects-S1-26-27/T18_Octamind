@@ -91,9 +91,10 @@ The title mention (`sentence_index = -1`) stands for the paragraph's subject, so
 
 Role 4's initial baseline matches normalized entity names and aliases in the question,
 prefers the longest non-overlapping matches, and returns every entity id for an ambiguous
-alias in stable order. It also records the ambiguous matches for evaluation. Ranking and
-capping candidates are deliberately deferred: they must be measured as a query-understanding
-policy rather than introduced as an undocumented heuristic.
+alias. Candidates are ranked by canonical-name match, mention frequency and stable id, but
+never capped or removed. It also records ambiguous matches for evaluation. A more advanced
+ranking or capping policy must be measured as a query-understanding policy rather than
+introduced as an undocumented heuristic.
 
 ## Output of traversal (Role 5 to Role 6)
 

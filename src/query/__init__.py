@@ -1,6 +1,7 @@
 """Role 4 query understanding and evidence planning."""
 
 from .analyze import analyze_question
+from .io import load_entities
 from .types import EntityMatch, QueryAnalysis
 
-__all__ = ["EntityMatch", "QueryAnalysis", "analyze_question"]
+__all__ = ["EntityMatch", "QueryAnalysis", "analyze_question", "load_entities"]

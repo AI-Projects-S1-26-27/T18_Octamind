@@ -15,12 +15,28 @@ def _normalized_question(question: str) -> str:
     return " ".join(normalize_name(question).split())
 
 
+def _rank_candidates(surface: str, entity_ids: Iterable[str], entities: dict[str, Entity]) -> tuple[str, ...]:
+    """Apply the initial transparent ranking without capping candidates."""
+    return tuple(
+        sorted(
+            entity_ids,
+            key=lambda entity_id: (
+                normalize_name(entities[entity_id].name) != surface,
+                -entities[entity_id].mention_count,
+                entity_id,
+            ),
+        )
+    )
+
+
 def _find_matches(question: str, entities: Iterable[Entity]) -> tuple[EntityMatch, ...]:
     normalized_question = _normalized_question(question)
     if not normalized_question:
         return ()
 
-    index = name_index(list(entities))
+    entity_list = list(entities)
+    entity_by_id = {entity.id: entity for entity in entity_list}
+    index = name_index(entity_list)
     candidates = []
     for surface, entity_ids in index.items():
         if not surface:
@@ -32,14 +48,14 @@ def _find_matches(question: str, entities: Iterable[Entity]) -> tuple[EntityMatc
                     match.start(),
                     -(match.end() - match.start()),
                     surface,
-                    tuple(sorted(entity_ids)),
+                    _rank_candidates(surface, entity_ids, entity_by_id),
                     match.end(),
                 )
             )
 
     # Prefer the longest match at each position and discard overlapping
-    # shorter matches. Ambiguous aliases retain every matching entity for now;
-    # ranking and capping are intentionally future policy decisions.
+    # shorter matches. Ambiguous aliases retain every matching entity; the
+    # current ranking is intentionally simple and can be replaced later.
     selected = []
     for start, negative_length, surface, entity_ids, end in sorted(candidates):
         if any(start < chosen_end and end > chosen_start for chosen_start, chosen_end, _ in selected):
@@ -49,7 +65,7 @@ def _find_matches(question: str, entities: Iterable[Entity]) -> tuple[EntityMatc
     matches = []
     seen_matches = set()
     for start, end, surface in sorted(selected):
-        entity_ids = tuple(sorted(index[surface]))
+        entity_ids = _rank_candidates(surface, index[surface], entity_by_id)
         match_key = (surface, entity_ids)
         if match_key in seen_matches:
             continue
