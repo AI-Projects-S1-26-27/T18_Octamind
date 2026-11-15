@@ -89,6 +89,19 @@ The title mention (`sentence_index = -1`) stands for the paragraph's subject, so
 - `seeds: list[str]` entity ids linked from the question.
 - `q_emb: tuple[float]` question embedding.
 
+Role 4's initial baseline matches normalized entity names and aliases in the question,
+prefers the longest non-overlapping matches, and returns every entity id for an ambiguous
+alias. Candidates are ranked by canonical-name match, mention frequency and stable id, but
+never capped or removed. It also records ambiguous matches for evaluation. A more advanced
+ranking or capping policy must be measured as a query-understanding policy rather than
+introduced as an undocumented heuristic.
+
+Role 4 ignores single-word question function words (for example `which`, `was`, and `and`)
+even if an upstream extraction run produced them as entities. Multi-word names are not removed
+by this guard. The query manifest reports seed counts, non-gold seed names, and recall for
+gold names that are explicitly present in the question; gold entities absent from the question
+are not counted against query-side seed recall.
+
 ## Output of traversal (Role 5 to Role 6)
 
 - `H`: the selected list of `Edge` (the selected subgraph), plus counters: nodes expanded, peak
