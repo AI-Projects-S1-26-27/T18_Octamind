@@ -2,7 +2,7 @@
 
 CS F407 / U407 Artificial Intelligence project, **Team 18 (Octamind)**, **Research** track, BITS Pilani Hyderabad Campus.
 
-> **Status (2026-11-12).** Done: data ingestion and fixed-seed sampling for all three datasets (Role 1, `data/`), and entity/concept extraction and linking (Role 2, `src/graph/`, see `docs/EXTRACTION.md`). In progress: relationship discovery and graph construction (Role 3), traversal (Role 5, scaffold in `src/traversal/`). Sections marked *planned* describe the design in our proposal.
+> **Status (2026-11-15).** Done: data ingestion and fixed-seed sampling for all three datasets (Role 1, `data/`, see `docs/DATA_NOTES.md`), entity/concept extraction and linking (Role 2, `src/graph/`, see `docs/EXTRACTION.md`), and relationship discovery, oracle/automatic graph construction, and shared embedding service (Role 3, `src/graph/`, see `docs/GRAPH_CONSTRUCTION.md`). In progress: traversal (Role 5, scaffold in `src/traversal/`). Sections marked *planned* describe the design in our proposal.
 
 ## What this project is about
 
@@ -80,11 +80,12 @@ octamind-graph-rag/
 ├── tests/               # unit tests, including the Figure 1 toy graph
 ├── results/             # tables and figures
 └── docs/
-    ├── INTERFACE.md     # data contracts: paragraph ids, entities, edges, graph
-    ├── DATA_NOTES.md    # dataset sources and ingestion notes (Role 1)
-    ├── EXTRACTION.md    # entity extraction: how to run, results, limits (Role 2)
-    ├── PROGRESS_LOG.md  # running log of work and decisions
-    └── AI_USAGE.md      # AI-tool disclosure log
+    ├── INTERFACE.md          # data contracts: paragraph ids, entities, edges, graph
+    ├── DATA_NOTES.md         # dataset sources and ingestion notes (Role 1)
+    ├── EXTRACTION.md         # entity extraction: how to run, results, limits (Role 2)
+    ├── GRAPH_CONSTRUCTION.md # graph construction, relations, embeddings (Role 3)
+    ├── PROGRESS_LOG.md       # running log of work and decisions
+    └── AI_USAGE.md           # AI-tool disclosure log
 ```
 
 ## Getting started
@@ -93,8 +94,11 @@ octamind-graph-rag/
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 pytest
-python -m data.sampling                 # needs the raw files, see docs/DATA_NOTES.md
-python -m src.graph.run_extraction       # needs GEMINI_API_KEY in .env, see docs/EXTRACTION.md
+python -m data.sampling                 # Role 1: sample dev sets (see docs/DATA_NOTES.md)
+python -m src.graph.run_extraction       # Role 2: entity extraction (see docs/EXTRACTION.md)
+python -m src.graph.oracle              # Role 3: build oracle graphs (System S7)
+python -m src.graph.relations           # Role 3: build automatic graphs (System S6)
+python -m src.graph.embeddings          # Role 3: generate vectors & entity embeddings
 ```
 
 At this stage some traversal tests **fail on purpose** (`NotImplementedError`): they describe the behaviour of functions that are still to be written. API keys go in a local `.env` file, which is git-ignored and must never be committed. Every result in the report should be reproducible from a clean clone using a config file and a seed.
