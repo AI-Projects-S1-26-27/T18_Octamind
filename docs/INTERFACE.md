@@ -89,6 +89,12 @@ The title mention (`sentence_index = -1`) stands for the paragraph's subject, so
 - `seeds: list[str]` entity ids linked from the question.
 - `q_emb: tuple[float]` question embedding.
 
+Role 4's initial baseline matches normalized entity names and aliases in the question,
+prefers the longest non-overlapping matches, and returns every entity id for an ambiguous
+alias in stable order. It also records the ambiguous matches for evaluation. Ranking and
+capping candidates are deliberately deferred: they must be measured as a query-understanding
+policy rather than introduced as an undocumented heuristic.
+
 ## Output of traversal (Role 5 to Role 6)
 
 - `H`: the selected list of `Edge` (the selected subgraph), plus counters: nodes expanded, peak
