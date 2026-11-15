@@ -1,0 +1,21 @@
+# Role 3: Relationship Discovery and Graph Construction
+seed: 0
+processed_dir: data/processed
+extraction_dir: data/graph/extraction
+out_dir: data/graph
+
+datasets: [musique, twiki, hotpotqa]
+
+# Extractor mode: 'oracle' (ground-truth chain), 'rule' (co-occurrence baseline), or 'llm'
+extractor: oracle
+
+# Relationship extraction settings
+relation:
+  min_confidence: 0.5
+  max_tokens_between_entities: 15
+  include_title_relations: true
+
+llm:
+  model: gemini-3.5-flash-lite
+  temperature: 0
+  cache_dir: data/cache/relations
