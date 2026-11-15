@@ -4,6 +4,7 @@ from pathlib import Path
 
 from src.graph.entities import Entity
 from src.query import analyze_question
+from src.query.quality import summarize_quality
 from src.query.run import run_dataset
 
 
@@ -74,6 +75,37 @@ def test_analyze_question_has_no_seeds_when_nothing_matches():
     assert analysis.matches == ()
     assert analysis.q_emb == (0.0, 1.0)
     assert calls == ["Who is unknown?"]
+
+
+def test_analyze_question_skips_single_word_function_entities():
+    entities = [
+        entity("ent:which", "Which"),
+        entity("ent:paris", "Paris"),
+    ]
+
+    analysis = analyze_question("Which city is Paris in?", entities, lambda _: ())
+
+    assert analysis.seeds == ("ent:paris",)
+
+
+def test_seed_quality_measures_only_gold_names_present_in_question():
+    record = type(
+        "Record",
+        (),
+        {
+            "question": "Where is Paris?",
+            "gold_chain": [],
+            "answer": "Paris",
+        },
+    )()
+    entities = [entity("ent:paris", "Paris")]
+    analysis = analyze_question("Where is Paris?", entities, lambda _: ())
+
+    quality = summarize_quality([analysis], [record], entities)
+
+    assert quality["question_gold_names"] == 1
+    assert quality["question_gold_hits"] == 1
+    assert quality["question_gold_recall"] == 1.0
 
 
 def test_run_dataset_writes_query_records_and_diagnostics():

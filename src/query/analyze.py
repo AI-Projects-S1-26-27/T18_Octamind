@@ -9,6 +9,15 @@ from src.graph.linking import name_index
 
 from .types import EntityMatch, QueryAnalysis
 
+_QUESTION_FUNCTION_WORDS = frozenset(
+    """
+    a an and are as at be been before but by can did do does for from had has have he her
+    him his how i if in is it its me more my no of on or our she so than that the their
+    them then there these they this those to was we were what when where which who why
+    will with you your
+    """.split()
+)
+
 
 def _normalized_question(question: str) -> str:
     """Normalize question whitespace while retaining internal punctuation."""
@@ -65,6 +74,8 @@ def _find_matches(question: str, entities: Iterable[Entity]) -> tuple[EntityMatc
     matches = []
     seen_matches = set()
     for start, end, surface in sorted(selected):
+        if " " not in surface and surface in _QUESTION_FUNCTION_WORDS:
+            continue
         entity_ids = _rank_candidates(surface, index[surface], entity_by_id)
         match_key = (surface, entity_ids)
         if match_key in seen_matches:

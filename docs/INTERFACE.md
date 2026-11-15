@@ -96,6 +96,12 @@ never capped or removed. It also records ambiguous matches for evaluation. A mor
 ranking or capping policy must be measured as a query-understanding policy rather than
 introduced as an undocumented heuristic.
 
+Role 4 ignores single-word question function words (for example `which`, `was`, and `and`)
+even if an upstream extraction run produced them as entities. Multi-word names are not removed
+by this guard. The query manifest reports seed counts, non-gold seed names, and recall for
+gold names that are explicitly present in the question; gold entities absent from the question
+are not counted against query-side seed recall.
+
 ## Output of traversal (Role 5 to Role 6)
 
 - `H`: the selected list of `Edge` (the selected subgraph), plus counters: nodes expanded, peak

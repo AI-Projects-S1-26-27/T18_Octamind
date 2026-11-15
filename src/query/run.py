@@ -21,6 +21,7 @@ from src.graph.embeddings import get_service
 
 from .analyze import analyze_question
 from .io import load_entities, write_jsonl
+from .quality import summarize_quality
 
 
 def _analysis_record(record, analysis) -> dict:
@@ -43,7 +44,7 @@ def _analysis_record(record, analysis) -> dict:
     }
 
 
-def _manifest(dataset: str, records: list, analyses: list, mode: str) -> dict:
+def _manifest(dataset: str, records: list, analyses: list, entities: list, mode: str) -> dict:
     seed_counts = [len(analysis.seeds) for analysis in analyses]
     ambiguous_matches = sum(len(analysis.ambiguous_matches) for analysis in analyses)
     ambiguous_candidates = sum(
@@ -51,7 +52,7 @@ def _manifest(dataset: str, records: list, analyses: list, mode: str) -> dict:
         for analysis in analyses
         for match in analysis.ambiguous_matches
     )
-    return {
+    manifest = {
         "dataset": dataset,
         "embedding_mode": mode,
         "questions": len(records),
@@ -64,6 +65,8 @@ def _manifest(dataset: str, records: list, analyses: list, mode: str) -> dict:
         "ambiguous_matches": ambiguous_matches,
         "ambiguous_candidates": ambiguous_candidates,
     }
+    manifest["seed_quality"] = summarize_quality(analyses, records, entities)
+    return manifest
 
 
 def run_dataset(
@@ -92,7 +95,7 @@ def run_dataset(
         (_analysis_record(record, analysis) for record, analysis in zip(records, analyses)),
         output_dir / f"{dataset}_dev.jsonl",
     )
-    manifest = _manifest(dataset, records, analyses, service.mode)
+    manifest = _manifest(dataset, records, analyses, entities, service.mode)
     (output_dir / f"{dataset}_manifest.json").write_text(
         json.dumps(manifest, indent=2) + "\n",
         encoding="utf-8",
