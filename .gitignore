@@ -5,6 +5,7 @@
 *.key
 *.pem
 credentials*.json
+.vscode/
 
 # python
 __pycache__/
