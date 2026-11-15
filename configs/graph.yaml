@@ -21,7 +21,7 @@ llm:
   cache_dir: data/cache/relations
 
 embedding:
-  model: text-embedding-004
+  model: gemini-embedding-2
   dimension: 768
   cache_dir: data/cache/embeddings
   batch_size: 100
