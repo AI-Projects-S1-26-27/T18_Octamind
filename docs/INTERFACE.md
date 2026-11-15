@@ -59,11 +59,29 @@ The title mention (`sentence_index = -1`) stands for the paragraph's subject, so
 - A list of edges plus `entity_embeddings: dict[str, tuple]` (one embedding per entity, from the same
   model), used for the semantic-distance heuristic h(n).
 - Persisted as JSON Lines (one edge per line) plus one JSON file for entity embeddings, so every
-  member can load it without the extraction code. Exact file names: TBD with Role 3.
+  member can load it without the extraction code. Files, per dataset (`musique`, `twiki`, `hotpotqa`):
+
+  | File | Content |
+  |---|---|
+  | `data/graph/<dataset>/oracle_edges.jsonl` | oracle graph (S7); not built for `hotpotqa` (no gold chain) |
+  | `data/graph/<dataset>/edges.jsonl` | automatic graph (S6), rule or LLM extractor (see `manifest_<mode>.json`) |
+  | `data/graph/<dataset>/entity_embeddings.json` | `{entity id: vector}` for every entity in `entities.jsonl` **and** every edge endpoint Role 2 did not extract |
+
+- Load with `src.graph.graph_io.load_graph(dataset, kind="oracle" | "auto")`, which returns a
+  `Graph` and adds inverse edges; `graph_report(graph)` lists missing embeddings.
+- **Inverse edges.** `Graph.out_edges` only follows an edge from its head, and an extracted edge
+  points the way the sentence reads, so a question seed on the object of a sentence would have no
+  way out. `load_graph` adds, for every `a --r--> b`, an edge `b --"inverse of r"--> a` with the same
+  confidence, support, provenance and embedding. `graph_io.is_inverse(edge)` identifies them (for
+  example to avoid listing one fact twice in the context). Pass `add_inverse=False` for the raw graph.
+- Edge text for phi(e) is `"<head name> <relation> <tail name>"` with readable entity names
+  (`embedding.use_entity_names` in `configs/graph.yaml`); `Edge.text` itself still uses ids.
 
 ## Shared services (one implementation, used by everyone)
 
-- `embed(text) -> tuple[float]`: the fixed embedding model (Gemini Embedding 2).
+- `embed(text) -> tuple[float]`: the fixed embedding model (`gemini-embedding-2`, Gemini Embedding 2).
+  `from src.graph.embeddings import embed` (configured by `configs/graph.yaml`; `mode: mock` gives
+  non-semantic hash vectors for tests only).
 - `count_tokens(text) -> int`: one tokenizer for all systems, so context sizes are comparable.
 
 ## Query side (Role 4 to Role 5)

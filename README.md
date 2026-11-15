@@ -2,7 +2,7 @@
 
 CS F407 / U407 Artificial Intelligence project, **Team 18 (Octamind)**, **Research** track, BITS Pilani Hyderabad Campus.
 
-> **Status (2026-11-15).** Done: data ingestion and fixed-seed sampling for all three datasets (Role 1, `data/`, see `docs/DATA_NOTES.md`), entity/concept extraction and linking (Role 2, `src/graph/`, see `docs/EXTRACTION.md`), and relationship discovery, oracle/automatic graph construction, and shared embedding service (Role 3, `src/graph/`, see `docs/GRAPH_CONSTRUCTION.md`). In progress: traversal (Role 5, scaffold in `src/traversal/`). Sections marked *planned* describe the design in our proposal.
+> **Status (2026-11-15).** Done: data ingestion and fixed-seed sampling for all three datasets (Role 1, `data/`, see `docs/DATA_NOTES.md`), entity/concept extraction and linking (Role 2, `src/graph/`, see `docs/EXTRACTION.md`). Role 3 (relationship discovery and graph construction, see `docs/GRAPH.md`): oracle graph (S7), rule and LLM relation extractors (S6), embedding service and graph loader are in place; the real-model embedding run and the full LLM relation run still have to be executed (they need `GEMINI_API_KEY`). In progress: traversal (Role 5, scaffold in `src/traversal/`). Sections marked *planned* describe the design in our proposal.
 
 ## What this project is about
 
@@ -83,7 +83,7 @@ octamind-graph-rag/
     ├── INTERFACE.md          # data contracts: paragraph ids, entities, edges, graph
     ├── DATA_NOTES.md         # dataset sources and ingestion notes (Role 1)
     ├── EXTRACTION.md         # entity extraction: how to run, results, limits (Role 2)
-    ├── GRAPH_CONSTRUCTION.md # graph construction, relations, embeddings (Role 3)
+    ├── GRAPH.md         # relation discovery, oracle graph, embeddings, graph loader (Role 3)
     ├── PROGRESS_LOG.md       # running log of work and decisions
     └── AI_USAGE.md           # AI-tool disclosure log
 ```

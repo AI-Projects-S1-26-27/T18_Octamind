@@ -80,7 +80,7 @@ def test_extract_musique_style_with_placeholders():
     record = make_synthetic_record(
         qid="musique_1",
         steps=[
-            {"head": None, "relation": "Who wrote Hamlet?", "tail": "William Shakespeare", "support_pids": ["musique::Hamlet#123"]},
+            {"head": None, "relation": "Who wrote Hamlet?", "tail": "William Shakespeare", "support_pids": ["musique::Hamlet#1a2b3c4d"]},
             {"head": None, "relation": "#1 >> birthplace", "tail": "Stratford-upon-Avon", "support_pids": ["musique::Shakespeare_Bio"]},
         ],
     )

@@ -1,29 +1,41 @@
 # Role 3: Relationship Discovery and Graph Construction
-seed: 0
+# Everything here is deterministic (no sampling); LLM answers are cached per paragraph, so no seed is needed.
 processed_dir: data/processed
 extraction_dir: data/graph/extraction
 out_dir: data/graph
 
-datasets: [musique, twiki, hotpotqa]
+datasets: [musique, twiki, hotpotqa]   # hotpotqa has no gold chain, so no oracle graph is built for it
 
-# Extractor mode: 'oracle' (ground-truth chain), 'rule' (co-occurrence baseline), or 'llm'
-extractor: oracle
+# File name of the automatic graph (S6) inside data/graph/<dataset>/
+automatic_edges_file: edges.jsonl
+
+# Extractor for `python -m src.graph.relations`: 'rule' (co-occurrence baseline) or 'llm'.
+# (The oracle graph has its own entry point: `python -m src.graph.oracle`.)
+extractor: rule
 
 # Relationship extraction settings
 relation:
-  min_confidence: 0.5
+  min_confidence: 0.5          # relations below this are dropped before aggregation
+  pair_confidence: 0.6         # rule: two entities in one sentence
+  title_confidence: 0.5        # rule: entity paired with the paragraph title
   max_tokens_between_entities: 15
   include_title_relations: true
 
+# (Inverse edges are added when a graph is loaded: `load_graph(..., add_inverse=True)` in src/graph/graph_io.py.)
+
 llm:
-  model: gemini-3.5-flash-lite
+  model: gemini-3.5-flash-lite # same pinned model as configs/extraction.yaml
   temperature: 0
+  requests_per_minute: 15      # free tier is tight; raise with billing
+  workers: 4
+  max_attempts: 8
   cache_dir: data/cache/relations
 
 embedding:
-  model: gemini-embedding-2
-  dimension: 768
+  model: gemini-embedding-2    # the project's fixed embedding model (README); text-embedding-004 was shut down
+  dimension: 64                # used by mock mode only; gemini-embedding-2 has its own output size
   cache_dir: data/cache/embeddings
   batch_size: 100
-  mode: mock  # 'gemini' for API, 'mock' for local offline testing
+  mode: gemini                 # 'mock' only for offline tests: its vectors are hash noise, never use them for experiments
+  use_entity_names: true       # embed "Barack Obama was born in Honolulu", not "ent:barack_obama was born in ent:honolulu"
   requests_per_minute: 60
