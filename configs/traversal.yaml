@@ -24,7 +24,13 @@ max_depth: 4
 
 # path pruning: drop paths whose path relevance rho(P) < tau
 tau: 0.0
+# Research runs embed each complete ordered path with the shared Gemini embedding model.
+# Use mean_edge only for API-free tests/debugging; it is an approximation to phi(P).
+path_relevance_mode: text
 
 # context selection
 budget_B: 1000        # token cap
 epsilon: 0.0          # stop when the next path's marginal utility falls below this
+
+# safety cap on popped nodes per question (reported if it triggers)
+max_expansions: 2000
