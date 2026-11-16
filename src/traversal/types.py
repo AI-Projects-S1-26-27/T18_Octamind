@@ -1,11 +1,17 @@
-"""Shared data types for traversal (Role 5). The edge format is the contract with Role 3
-(graph construction); see docs/INTERFACE.md. Do not change field names without telling them."""
+"""Shared data types for traversal (Role 5).
+
+The Edge fields are the agreed Role 3 -> Role 5 interface; do not rename them without
+coordinating with the graph-construction owner.  Search/result diagnostics are deliberately
+additive so Role 6 can continue consuming ``TraversalResult.paths`` and selected ``Edge``
+objects without an interface change.
+"""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+import math
 from typing import Optional
 
-Vector = tuple  # a tuple of floats; embeddings from the fixed embedding model
+Vector = tuple  # tuple[float, ...]; vectors come from the project's fixed embedding model
 
 
 @dataclass(frozen=True)
@@ -33,6 +39,10 @@ class Graph:
         self._out: dict = {}
         for e in self.edges:
             self._out.setdefault(e.head, []).append(e)
+        self.max_support: int = max((e.support for e in self.edges), default=1)
+        # Unit-length numpy copies, filled lazily by scoring.Scorer and shared across queries.
+        # Keys are ("e", id(edge)) or ("n", entity id).
+        self.vector_cache: dict = {}
 
     def out_edges(self, entity: str) -> list:
         return self._out.get(entity, [])
@@ -43,22 +53,41 @@ class Graph:
 
 @dataclass
 class SearchNode:
-    """Node data structure from Module 2: STATE, PARENT, ACTION, PATH-COST.
-    The state is the entity the partial path currently ends at; the path itself is
-    recovered by following parent pointers."""
+    """Module 2 search node: state, parent, action, path cost, and depth."""
     state: str
     parent: Optional["SearchNode"] = None
-    action: Optional[Edge] = None     # the edge that led here (None for a seed node)
+    action: Optional[Edge] = None     # edge that led here (None for a seed node)
     path_cost: float = 0.0            # g(n)
     depth: int = 0
 
     def path(self) -> list:
         """Edges from the seed to this node, in order."""
-        edges, n = [], self
-        while n is not None and n.action is not None:
-            edges.append(n.action)
-            n = n.parent
+        edges, node = [], self
+        while node is not None and node.action is not None:
+            edges.append(node.action)
+            node = node.parent
         return list(reversed(edges))
+
+
+@dataclass
+class Path:
+    """A candidate path, edge costs, end-node f-score, and optional path relevance rho(P)."""
+    edges: list
+    edge_costs: list
+    f: float
+    rho: Optional[float] = None
+
+
+@dataclass
+class TraversalResult:
+    paths: list                         # candidate Paths, best first (lowest f)
+    nodes_expanded: int = 0             # number of nodes popped from the frontier
+    peak_frontier: int = 0
+    missing_entity_embeddings: int = 0  # unique entities without a usable phi(n)
+    hit_expansion_cap: bool = False
+    initial_frontier: int = 0            # seed nodes remaining after initial beam pruning
+    nodes_pruned_by_beam: int = 0
+    paths_pruned_by_relevance: int = 0
 
 
 @dataclass
@@ -75,11 +104,45 @@ class Config:
     tau: float = 0.0
     budget_B: int = 1000
     epsilon: float = 0.0
+    max_expansions: int = 2000
     seed: int = 0
+    # Production experiments use phi(P) from the shared embedding model.  The mean-edge mode
+    # remains available for deterministic, API-free unit tests and offline debugging.
+    path_relevance_mode: str = "mean_edge"
+
+    def validate(self) -> "Config":
+        """Validate mutable configuration, including values changed by CLI overrides."""
+        for name in ("alpha", "beta", "eta", "gamma", "W", "epsilon"):
+            value = getattr(self, name)
+            if not isinstance(value, (int, float)) or not math.isfinite(value):
+                raise ValueError(f"{name} must be a finite number")
+        for name in ("alpha", "beta", "eta", "gamma", "W"):
+            if getattr(self, name) < 0:
+                raise ValueError(f"{name} must be non-negative")
+        if self.beam_k is not None and (isinstance(self.beam_k, bool) or not isinstance(self.beam_k, int) or self.beam_k < 1):
+            raise ValueError("beam_k must be a positive integer or None")
+        if self.beam_margin is not None:
+            if (not isinstance(self.beam_margin, (int, float))
+                    or not math.isfinite(self.beam_margin) or self.beam_margin < 0):
+                raise ValueError("beam_margin must be finite and non-negative or None")
+        if isinstance(self.max_depth, bool) or not isinstance(self.max_depth, int) or self.max_depth < 1:
+            raise ValueError("max_depth must be a positive integer")
+        if isinstance(self.budget_B, bool) or not isinstance(self.budget_B, int) or self.budget_B < 0:
+            raise ValueError("budget_B must be a non-negative integer")
+        if isinstance(self.max_expansions, bool) or not isinstance(self.max_expansions, int) or self.max_expansions < 1:
+            raise ValueError("max_expansions must be a positive integer")
+        if not isinstance(self.tau, (int, float)) or not math.isfinite(self.tau) or not -1.0 <= self.tau <= 1.0:
+            raise ValueError("tau must be a finite cosine threshold in [-1, 1]")
+        if self.path_relevance_mode not in {"text", "mean_edge"}:
+            raise ValueError("path_relevance_mode must be 'text' or 'mean_edge'")
+        return self
 
     @classmethod
     def from_yaml(cls, path: str) -> "Config":
         import yaml
-        with open(path) as f:
-            raw = yaml.safe_load(f) or {}
-        return cls(**{k: v for k, v in raw.items() if k in cls.__dataclass_fields__})
+        with open(path, encoding="utf-8") as fh:
+            raw = yaml.safe_load(fh) or {}
+        unknown = set(raw) - set(cls.__dataclass_fields__)
+        if unknown:
+            raise ValueError(f"unknown traversal config key(s): {', '.join(sorted(unknown))}")
+        return cls(**raw).validate()

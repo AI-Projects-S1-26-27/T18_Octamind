@@ -104,5 +104,14 @@ are not counted against query-side seed recall.
 
 ## Output of traversal (Role 5 to Role 6)
 
-- `H`: the selected list of `Edge` (the selected subgraph), plus counters: nodes expanded, peak
-  frontier size. Role 6 serializes H (triple plus source sentence) into the prompt.
+- `traverse(graph, seeds, q_emb, cfg)` returns a `TraversalResult` (candidate `Path`s, nodes expanded,
+  initial/peak frontier sizes, beam/relevance prune counts, and flags). In the research config,
+  `path_relevance_mode: text` uses the shared embedding service to embed complete candidate paths in
+  batches; `mean_edge` is reserved for API-free tests/debugging. `select_context(result.paths, q_emb, token_counter, cfg, edge_text_fn)` returns
+  `H`: the selected list of `Edge`, in the order they were added. Role 6 serializes H (triple plus source
+  sentence) into the prompt. Pass the serializer's text for an edge as `edge_text_fn` so the token budget
+  counts what the prompt really contains.
+- **Inverse edges (answer to Role 3):** keep them in `load_graph`. `select_context` counts an edge and its
+  inverse as one fact, so a fact is never listed twice. Role 6: use `graph_io.is_inverse(edge)` to print the
+  fact in its natural direction.
+- Run on the sampled questions with `python -m src.traversal.run` (see `docs/TRAVERSAL.md`).
