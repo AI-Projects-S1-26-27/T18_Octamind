@@ -3,3 +3,4 @@ pyyaml
 pytest
 google-genai
 pyarrow
+matplotlib
