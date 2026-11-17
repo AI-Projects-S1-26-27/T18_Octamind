@@ -2,7 +2,9 @@
 
 CS F407 / U407 Artificial Intelligence project, **Team 18 (Octamind)**, **Research** track, BITS Pilani Hyderabad Campus.
 
-> **Status (2026-11-15).** Done: data ingestion and fixed-seed sampling for all three datasets (Role 1, `data/`, see `docs/DATA_NOTES.md`), entity/concept extraction and linking (Role 2, `src/graph/`, see `docs/EXTRACTION.md`). Role 3 (relationship discovery and graph construction, see `docs/GRAPH.md`): oracle graph (S7), rule and LLM relation extractors (S6), embedding service and graph loader are in place; the real-model embedding run and the full LLM relation run still have to be executed (they need `GEMINI_API_KEY`). In progress: traversal (Role 5, scaffold in `src/traversal/`). Sections marked *planned* describe the design in our proposal.
+Repository: <https://github.com/AI-Projects-S1-26-27/T18_Octamind>
+
+> **Status (2026-11-17).** Roles 1-4 and Role 5 traversal are implemented in the repository. Role 5 has been merged into `main`. Role 6 now has evidence-aware context serialization and optional Gemini answer generation; Role 7 has local S1-S3 retrievers (full context, vector RAG, naive k-hop); Role 8 has answer/evidence metrics, paired bootstrap, tuning/test split, ablation configuration generation and graph-error injection helpers. These are implementation components, not evidence of final research outcomes. The official S4 HippoRAG/LightRAG integration and optional S5 IRCoT are not bundled; real Gemini embeddings/answers, tuned weights and held-out experiments still require credentials and actual runs.
 
 ## What this project is about
 
@@ -25,7 +27,7 @@ A partial or negative result, with analysis of where and why, is an acceptable o
 | RQ3 | Which scoring signals matter? | H3: query relevance contributes most. |
 | RQ4 | How sensitive is the method to graph-construction errors? | H4: performance degrades with graph errors; the oracle-graph gap separates construction errors from traversal errors. |
 
-## Approach (planned)
+## Method
 
 **Offline, built once:** corpus, then entity/concept/fact extraction, then relationship discovery, then the Semantic Knowledge Network (triples + confidence + provenance).
 
@@ -58,9 +60,19 @@ The heuristic `h` is not admissible, so it is used for ordering and pruning, not
 > **Data note:** all three datasets download and sample (HotpotQA is rebuilt from the official
 > HuggingFace parquet). Sources and commands: `docs/DATA_NOTES.md`.
 
-- **Models (fixed for every system):** Gemini Flash at temperature 0 (exact answer-model version to be pinned in `configs/`), and Gemini Embedding 2. Entity extraction (offline, Role 2) uses `gemini-3.5-flash-lite`, pinned in `configs/extraction.yaml`, because the free API tier allows only 20 Flash requests per day.
+- **Models (for research runs):** use one pinned Gemini answer model at temperature 0 for every system and the shared Gemini Embedding 2 model for entities, relationships, query vectors and vector-RAG chunks. Current model names are configured in `configs/context.yaml`, `configs/graph.yaml` and `configs/extraction.yaml`. Role 2 has both rule and Gemini extraction modes; the rule-based run is a baseline/smoke path, not a substitute for an approved LLM research run.
 - **Metrics:** EM and token-level F1; context tokens sent to the LLM; evidence recall and precision (mapped to source paragraphs); path recall where a verified gold chain exists; context reduction at matched accuracy; nodes expanded, peak frontier size and latency.
 - **Statistics:** paired bootstrap 95% confidence intervals.
+
+## Current implementation status
+
+- **Roles 1-4:** dataset processing, entity extraction, relationship/graph construction, and query analysis are present in `data/`, `src/graph/`, and `src/query/`.
+- **Role 5:** query-aware scoring, weighted best-first traversal, beam search, path ranking, budgeted subgraph selection and traversal diagnostics are implemented in `src/traversal/`.
+- **Role 6:** source-aware context serialization, a common evidence-grounded prompt, optional Gemini answer generation, and a shared answer runner for S1-S3 are implemented in `src/context/`.
+- **Role 7:** the local S1 full-context, S2 vector-RAG and S3 naive k-hop baselines are implemented in `src/baselines/`. Proposal S4 HippoRAG/LightRAG and optional S5 IRCoT are not integrated.
+- **Role 8:** answer/evidence metrics, paired bootstrap, hop-stratified split, ablation configs, graph corruption and plotting helpers are implemented in `src/evaluation/`.
+
+Implementation and API-free tests do not mean the research experiments are complete. Real Gemini embeddings/answers, hyperparameter selection on tune IDs, held-out evaluation, RQ4 graph-corruption runs, and a reproducible S4 fallback still need to be executed and reviewed. See `docs/FINAL_RUNBOOK.md`.
 
 ## Repository layout
 
@@ -70,20 +82,26 @@ octamind-graph-rag/
 ├── configs/             # all run settings (models, W, k, m, budgets, seeds)
 ├── data/                # dataset loaders and sampling (raw data is not committed)
 ├── src/
-│   ├── graph/           # entity extraction + linking (done); relations, network construction, oracle graph (planned)
-│   ├── query/           # query analysis and seed-entity identification (planned)
-│   ├── traversal/       # edge cost, weighted A*, beam search, context selection  <- scaffold exists
-│   ├── context/         # subgraph serialization, token budget, prompts (planned)
-│   ├── baselines/       # full context, vector RAG, k-hop, HippoRAG (planned)
-│   └── evaluation/      # metrics, token counting, bootstrap, plots (planned)
+│   ├── graph/           # entity extraction/linking, relationship discovery, oracle graph and embeddings
+│   ├── query/           # query analysis, seed-entity identification and question embeddings
+│   ├── traversal/       # Role 5: edge cost, weighted A*, beam search, context selection
+│   ├── context/         # Role 6: source-aware serialization, prompts, optional answer generation
+│   ├── baselines/       # Role 7: S1 full context, S2 vector RAG, S3 naive k-hop
+│   └── evaluation/      # Role 8: EM/F1, evidence metrics, bootstrap, ablations, error injection
 ├── experiments/         # scripts for each experiment
 ├── tests/               # unit tests, including the Figure 1 toy graph
 ├── results/             # tables and figures
 └── docs/
-    ├── INTERFACE.md          # data contracts: paragraph ids, entities, edges, graph
+    ├── INTERFACE.md          # shared data contracts for Roles 3-8
     ├── DATA_NOTES.md         # dataset sources and ingestion notes (Role 1)
     ├── EXTRACTION.md         # entity extraction: how to run, results, limits (Role 2)
-    ├── GRAPH.md         # relation discovery, oracle graph, embeddings, graph loader (Role 3)
+    ├── GRAPH.md              # relation discovery, oracle graph, embeddings (Role 3)
+    ├── TRAVERSAL.md          # search and subgraph selection (Role 5)
+    ├── CONTEXT.md            # context serialization and answer generation (Role 6)
+    ├── BASELINES.md          # implemented and pending retrieval baselines (Role 7)
+    ├── EVALUATION.md         # metrics, splits, ablations and error analysis (Role 8)
+    ├── FINAL_RUNBOOK.md      # reproducible pipeline and experiment commands
+    ├── COMPLETION_STATUS.md  # implementation vs. empirical completion status
     ├── PROGRESS_LOG.md       # running log of work and decisions
     └── AI_USAGE.md           # AI-tool disclosure log
 ```
@@ -99,9 +117,14 @@ python -m src.graph.run_extraction       # Role 2: entity extraction (see docs/E
 python -m src.graph.oracle              # Role 3: build oracle graphs (System S7)
 python -m src.graph.relations           # Role 3: build automatic graphs (System S6)
 python -m src.graph.embeddings          # Role 3: generate vectors & entity embeddings
+python -m src.query.run                 # Role 4: seed entities + question embeddings
+python -m pytest -q                     # run all unit/integration tests
 ```
 
-At this stage some traversal tests **fail on purpose** (`NotImplementedError`): they describe the behaviour of functions that are still to be written. API keys go in a local `.env` file, which is git-ignored and must never be committed. Every result in the report should be reproducible from a clean clone using a config file and a seed.
+For Roles 5-8 experiment order, tune/test splits, baselines, answer generation and evaluation,
+follow `docs/FINAL_RUNBOOK.md` rather than running sweeps on the held-out test data.
+
+Run `python -m pytest -q` for the API-free test suite. Gemini-backed embedding and answer generation require a local `.env` file with `GEMINI_API_KEY`; it is git-ignored and must never be committed. Mock embeddings are hash noise for plumbing tests only. Every report result must be reproducible from a clean clone using committed configs and fixed seeds.
 
 ## Working agreements
 

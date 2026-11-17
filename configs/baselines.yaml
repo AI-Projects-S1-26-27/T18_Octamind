@@ -1,0 +1,8 @@
+# Role 7: proposal-aligned baseline settings.
+seed: 0
+chunk_sizes: [128, 256, 512]
+chunk_overlap: 32
+vector_k: [1, 2, 3, 5, 8, 10]
+naive_hops: [1, 2, 3, 4]
+context_budgets: [250, 500, 1000, 2000, 4000]
+embedding_mode: gemini   # mock is for plumbing tests only

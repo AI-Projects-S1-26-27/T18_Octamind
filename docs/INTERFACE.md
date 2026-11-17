@@ -115,3 +115,23 @@ are not counted against query-side seed recall.
   inverse as one fact, so a fact is never listed twice. Role 6: use `graph_io.is_inverse(edge)` to print the
   fact in its natural direction.
 - Run on the sampled questions with `python -m src.traversal.run` (see `docs/TRAVERSAL.md`).
+
+## Role 6: selected subgraph to evidence context and answer
+
+`src/context/ContextSerializer` consumes Role 5's selected `list[Edge]` and a dataset-wide `CorpusIndex` built from Role 1 `QuestionRecord.paragraphs`. Each serialized fact contains:
+
+- one readable triple in the source fact's natural direction (inverse edges are normalized and duplicates are removed);
+- up to `max_sources_per_edge` paragraphs resolved from the edge's `provenance` IDs;
+- paragraph IDs beside their source text, so the answer model can cite only evidence it received.
+
+The exact `ContextSerializer.edge_block` function is passed to `select_context` as `edge_text_fn`, so the selection budget covers the same text Role 6 later renders. The current graph edge schema contains paragraph IDs but not source sentence indices; Role 6 therefore serializes the full supporting paragraph rather than claiming exact sentence extraction. See `docs/CONTEXT.md`.
+
+The common QA output row stores `question_id`, `system` (S6/S7/S1/S2/S3), `context`, `retrieved_paragraph_ids`, `gold_paragraph_ids`, `answer`, `supporting_paragraph_ids`, model name, and provider-reported prompt/output token counts when generation is enabled. Every system uses `src/context/prompt.py`'s same prompt template.
+
+## Role 7: retrieval baseline output
+
+S1-S3 are implemented in `src/baselines/retrievers.py`; `src.baselines.run` writes JSONL rows with `question_id`, `system`, sweep `parameters`, `retrieved_paragraph_ids`, `context`, `context_tokens`, `retrieval_latency_ms`, evidence metrics and embedding mode. S2 embeds the shared sampled-corpus chunks using the same embedding service as Roles 3/4. S3 uses depth-limited BFS and no query-aware scoring. S4 HippoRAG/LightRAG and optional S5 IRCoT remain external/not bundled; see `docs/BASELINES.md`.
+
+## Role 8: evaluation result rows
+
+`src.evaluation.run` consumes common JSONL result rows from Roles 6/7 and adds answer EM/F1, paragraph evidence precision/recall/F1, optional oracle-chain path recall and failure classification. `src.evaluation.metrics.paired_bootstrap_ci` expects values aligned by question ID. The deterministic split manifest from `src.evaluation.splits` separates tuning IDs from held-out test IDs. `docs/EVALUATION.md` defines the run order and known limitations.
