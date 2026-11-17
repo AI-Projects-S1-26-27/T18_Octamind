@@ -1,0 +1,2 @@
+max_sources_per_edge: 0
+tokenizer: regex_wordpunct_v1

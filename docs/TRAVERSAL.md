@@ -85,12 +85,13 @@ records the largest generated frontier before pruning so it captures the tempora
    (not-yet-selected) facts divided by their additional token cost. This greedy selection is an
    approximation to the budgeted objective, not a globally optimal knapsack solution. The budget is
    hard: an addition that would exceed `B` is skipped. Inverse duplicates are not re-added.
-8. **Tokenizer / prompt serializer.** The repository does not yet expose the shared `count_tokens`
-   service or Role 6's final serializer. Until those are connected, the runner's default
-   `simple_token_count` and readable triple text are explicitly placeholders. The output summary
-   records `tokenizer_is_placeholder: true`. For final experiments, call `run_dataset` with the
-   shared token counter and a serializer-compatible `edge_text_fn`; otherwise `context_tokens` is
-   only an estimate and must not be reported as actual LLM prompt tokens.
+8. **Tokenizer / prompt serializer.** The standalone Role 5 runner uses the shared deterministic
+   `regex_wordpunct_v1` counter. In the Role 6 pipeline, `ContextSerializer.edge_block` is passed
+   into the selector, so the selected-subgraph budget counts the same triple-plus-source-paragraph
+   blocks that are rendered into the evidence context. This shared count is comparable across
+   systems but is not Gemini's native tokenizer; provider-reported prompt usage is recorded
+   separately by Role 6. The budget covers the evidence context, not the fixed question/instruction
+   prefix.
 9. **Weight tuning.** Values in `configs/traversal.yaml` are initial settings, not tuned findings.
    Tune alpha, beta, eta, gamma, W, beam settings and budget on a held-out development slice; do not
    tune on the same questions used for the reported result.
@@ -117,8 +118,9 @@ python -m src.traversal.run --dataset musique --kind oracle --limit 5 --tag offl
 Inspect `results/traversal/*_summary.json`. Red flags: `share_with_no_edges` high (seeds missing or
 weights too strict), `share_hit_cap` > 0, `missing_entity_embeddings` > 0, `nodes_pruned_by_beam`
 higher than expected, or recall near 0 on the oracle graph (seed/entity-ID or provenance mismatch
-between Roles 1, 3 and 4). Also verify `tokenizer_is_placeholder` is false before treating context
-counts as actual prompt-token measurements.
+between Roles 1, 3 and 4). The standalone Role 5 count is the shared regex count over readable edge
+text. For final context measurements, use the Role 6 pipeline so selection and serialization share
+the same edge block; report provider-native prompt usage separately when available.
 
 ## Ablations
 
@@ -160,3 +162,10 @@ counts as actual prompt-token measurements.
 10. **Course connection?** Module 2 formal search problem, weighted best-first search, beam search
     and search-effort metrics; Module 3 knowledge base, declarative facts and soft data-driven
     chaining over graph relationships.
+
+## Shared split and alternate graph directories
+
+For Role 8's hop-stratified split, Role 5 accepts `--split-manifest results/evaluation/musique_split.json`
+with `--split-part tune` or `--split-part test`. It also accepts `--graph-dir`, `--query-dir`,
+`--processed-dir`, and `--out-dir`; these are used for the non-destructive RQ4 graph copies.
+See `docs/FINAL_RUNBOOK.md` for the full multi-role commands.
