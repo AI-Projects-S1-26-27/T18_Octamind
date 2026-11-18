@@ -23,6 +23,8 @@ data/*
 !data/loaders/**
 results/*
 !results/.gitkeep
+logs/*
+!logs/.gitkeep
 *.ckpt
 *.pt
 .DS_Store

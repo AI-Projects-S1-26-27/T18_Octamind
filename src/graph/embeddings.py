@@ -26,19 +26,56 @@ import json
 import math
 import os
 import random
+import re
+import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Optional
 
 import yaml
 
-from src.graph.extract import RateLimiter, load_dotenv
+from src.graph.extract import (
+    QuotaExhausted,
+    RateLimiter,
+    is_daily_quota_error,
+    load_dotenv,
+)
 from src.graph.oracle import read_edges, write_edges
 from src.traversal.types import Edge
 
 DEFAULT_CONFIG = "configs/graph.yaml"
 DEFAULT_MODEL = "gemini-embedding-2"
+
+
+class TeeOutput:
+    """Mirror terminal output to a persistent log and terminal."""
+
+    def __init__(self, path: Path):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self.terminal = sys.stdout
+        self.file = path.open("a", encoding="utf-8")
+
+    def write(self, text: str) -> int:
+        written = self.terminal.write(text)
+        self.file.write(text)
+        self.file.flush()
+        return written
+
+    def flush(self) -> None:
+        self.terminal.flush()
+        self.file.flush()
+
+    def close(self) -> None:
+        self.file.close()
+
+
+def open_run_log(dataset: Optional[str], mode: Optional[str]) -> tuple[Path, TeeOutput]:
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    label = dataset or "all"
+    log_path = Path("logs") / f"embeddings_{label}_{mode or 'configured'}_{stamp}.log"
+    return log_path, TeeOutput(log_path)
 
 
 class EmbeddingCache:
@@ -98,12 +135,15 @@ def make_gemini_client():
     load_dotenv()
     try:
         from google import genai
+        from google.genai import types
     except ImportError as exc:
         raise RuntimeError("Gemini embedding requires `pip install google-genai`") from exc
     if not (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")):
         raise RuntimeError("GEMINI_API_KEY (in .env, never committed) is required for gemini embedding mode; "
                            "use --mode mock only for offline tests.")
-    return genai.Client()
+    return genai.Client(http_options=types.HttpOptions(
+        retry_options=types.HttpRetryOptions(attempts=1),
+    ))
 
 
 def gemini_embed_batch(
@@ -125,33 +165,29 @@ def gemini_embed_batch(
         try:
             response = client.models.embed_content(model=model, contents=texts)
             results = [tuple(float(v) for v in item.values) for item in response.embeddings]
-        except Exception:
+        except Exception as exc:
+            message = str(exc)
+            code = getattr(exc, "code", None)
+            if code == 429 and is_daily_quota_error(message):
+                raise QuotaExhausted(message[:400]) from exc
+            transient = code in (429, 500, 502, 503, 504) or bool(
+                re.search(r"timeout|connect|reset|closed|unavailable|resource exhausted", message, re.I)
+            )
             if attempt == max_attempts - 1:
                 raise
-            time.sleep(2 ** attempt)
+            if not transient:
+                raise
+            print(
+                f"  embedding retry {attempt + 1}/{max_attempts}: "
+                f"{code if code is not None else 'transient error'}",
+                flush=True,
+            )
+            time.sleep(min(8.0, 2.0 ** attempt) + random.random())
             continue
         if len(results) != len(texts):
-            # Some Gemini deployments/models return only one vector for a list.
-            # Fall back to one provider request per text rather than corrupting order.
-            if len(texts) == 1:
-                raise RuntimeError(
-                    f"embedding API returned {len(results)} vectors for {len(texts)} texts"
-                )
-            individual = []
-            for index, text in enumerate(texts, start=1):
-                one_response = client.models.embed_content(model=model, contents=text)
-                one_results = [
-                    tuple(float(v) for v in item.values)
-                    for item in one_response.embeddings
-                ]
-                if len(one_results) != 1:
-                    raise RuntimeError(
-                        f"embedding API returned {len(one_results)} vectors for 1 text"
-                    )
-                individual.append(one_results[0])
-                if index % 100 == 0 or index == len(texts):
-                    print(f"  individual fallback: {index}/{len(texts)} texts", flush=True)
-            return individual
+            raise RuntimeError(
+                f"embedding API returned {len(results)} vectors for {len(texts)} texts"
+            )
         return results
 
     raise RuntimeError("unreachable")
@@ -221,7 +257,43 @@ class EmbeddingService:
                 if self._client is None:
                     self._client = make_gemini_client()
                 self.limiter.wait()
-                batch_vectors = gemini_embed_batch(batch, model=self.model, client=self._client)
+                try:
+                    batch_vectors = gemini_embed_batch(
+                        batch, model=self.model, client=self._client
+                    )
+                except RuntimeError as exc:
+                    if "embedding API returned" not in str(exc):
+                        raise
+                    print(
+                        f"  batch mismatch for {len(batch)} texts; "
+                        "using individual fallback",
+                        flush=True,
+                    )
+                    batch_vectors = []
+                    for fallback_index, text in enumerate(batch, start=1):
+                        cached = self.cache.get(self.model, text) if self.use_cache else None
+                        if cached is not None:
+                            batch_vectors.append(cached)
+                            continue
+                        self.limiter.wait()
+                        individual = gemini_embed_batch(
+                            [text],
+                            model=self.model,
+                            client=self._client,
+                            max_attempts=3,
+                        )
+                        if len(individual) != 1:
+                            raise RuntimeError(
+                                f"individual embedding returned {len(individual)} vectors"
+                            )
+                        batch_vectors.append(individual[0])
+                        if self.use_cache:
+                            self.cache.put(self.model, text, individual[0])
+                        if fallback_index % 100 == 0 or fallback_index == len(batch):
+                            print(
+                                f"  individual fallback: {fallback_index}/{len(batch)} texts",
+                                flush=True,
+                            )
             if len(batch_vectors) != len(batch):
                 raise RuntimeError(f"embedder returned {len(batch_vectors)} vectors for {len(batch)} texts")
 
@@ -368,6 +440,28 @@ def run(
     mode_override: Optional[str] = None,
 ) -> dict:
     """Embed entities and edges for configured datasets."""
+    log_path, tee = open_run_log(dataset_filter, mode_override)
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    sys.stdout = tee
+    sys.stderr = tee
+    print(f"[embeddings] log -> {log_path}", flush=True)
+    print(f"[embeddings] starting at {datetime.now().isoformat(timespec='seconds')}", flush=True)
+
+    try:
+        return _run(config_path, dataset_filter, mode_override)
+    finally:
+        sys.stdout = original_stdout
+        sys.stderr = original_stderr
+        tee.write(f"[embeddings] log retained -> {log_path}\n")
+        tee.close()
+
+
+def _run(
+    config_path: str | Path,
+    dataset_filter: Optional[str],
+    mode_override: Optional[str],
+) -> dict:
     with open(config_path, encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
 
@@ -405,10 +499,31 @@ def run(
                 for e in edges or ():
                     for eid in (e.head, e.tail):
                         names.setdefault(eid, entity_name_from_id(eid))
-            print(f"[{ds}] Embedding {len(names)} entities ({len(names) - extracted} edge endpoints not in entities.jsonl)...")
-            entity_embs = embed_entities(names, service)
             out_emb_path = ds_graph_dir / "entity_embeddings.json"
-            write_entity_embeddings(entity_embs, out_emb_path)
+            entity_embs = read_entity_embeddings(out_emb_path) if out_emb_path.exists() else {}
+            missing_names = {
+                eid: name for eid, name in names.items()
+                if eid not in entity_embs
+            }
+            if out_emb_path.exists():
+                print(
+                    f"[{ds}] Reusing entity_embeddings.json: {len(entity_embs)} stored, "
+                    f"{len(missing_names)} missing",
+                    flush=True,
+                )
+            if missing_names:
+                print(
+                    f"[{ds}] Embedding {len(missing_names)} missing entities "
+                    f"({len(names) - extracted} edge endpoints not in entities.jsonl)...",
+                    flush=True,
+                )
+                new_embs = embed_entities(missing_names, service)
+                entity_embs.update(new_embs)
+                write_entity_embeddings(entity_embs, out_emb_path)
+            elif not out_emb_path.exists():
+                print(f"[{ds}] Embedding {len(names)} entities...", flush=True)
+                entity_embs = embed_entities(names, service)
+                write_entity_embeddings(entity_embs, out_emb_path)
             stats["entities_embedded"] = len(entity_embs)
             stats["endpoint_entities_added"] = len(names) - extracted
             stats["entity_embeddings_file"] = str(out_emb_path)
@@ -418,11 +533,41 @@ def run(
         for label, edges, path in (("oracle", oracle_edges, oracle_path), ("auto", auto_edges, auto_path)):
             if edges is None:
                 continue
-            print(f"[{ds}] Embedding {label} edges from {path}...")
-            embedded = populate_edge_embeddings(edges, service, names if use_names else None)
-            write_edges(embedded, path)
-            stats[f"{label}_edges_embedded"] = len(embedded)
-            print(f"[{ds}] Updated {len(embedded)} {label} edges with vectors.")
+            missing = [edge for edge in edges if len(edge.embedding) == 0]
+            reused = len(edges) - len(missing)
+            print(
+                f"[{ds}] {label} edge embeddings: {reused} reused, "
+                f"{len(missing)} missing",
+                flush=True,
+            )
+            if missing:
+                print(f"[{ds}] Embedding {len(missing)} missing {label} edges...", flush=True)
+                embedded_missing = populate_edge_embeddings(
+                    missing, service, names if use_names else None
+                )
+                embedded_by_key = {
+                    (edge.head, edge.relation, edge.tail, edge.support, edge.provenance): edge.embedding
+                    for edge in embedded_missing
+                }
+                edges = [
+                    edge if len(edge.embedding) else
+                    Edge(
+                        head=edge.head,
+                        relation=edge.relation,
+                        tail=edge.tail,
+                        confidence=edge.confidence,
+                        support=edge.support,
+                        provenance=edge.provenance,
+                        embedding=embedded_by_key[
+                            (edge.head, edge.relation, edge.tail, edge.support, edge.provenance)
+                        ],
+                    )
+                    for edge in edges
+                ]
+                write_edges(edges, path)
+            stats[f"{label}_edges_embedded"] = len(edges)
+            stats[f"{label}_edges_reused"] = reused
+            print(f"[{ds}] Updated {len(edges)} {label} edges with vectors.", flush=True)
 
         manifest["datasets"][ds] = stats
 

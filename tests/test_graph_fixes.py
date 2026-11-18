@@ -289,25 +289,109 @@ def test_gemini_embed_batch_rejects_wrong_vector_count():
     assert vectors == [(0.1, 0.2)]
 
 
-def test_gemini_embed_batch_falls_back_for_one_vector_batch():
+def test_gemini_embed_batch_rejects_one_vector_for_multiple_texts():
     class Item:
         values = [0.1, 0.2]
 
     class Client:
         class models:
-            calls = 0
-
             @staticmethod
             def embed_content(model, contents):
                 class R:
                     embeddings = [Item()]
-
-                if isinstance(contents, list):
+                if isinstance(contents, list) and len(contents) > 1:
                     R.embeddings = [Item()]
                 return R()
 
-    vectors = embeddings.gemini_embed_batch(["a", "b"], client=Client(), max_attempts=1)
-    assert vectors == [(0.1, 0.2), (0.1, 0.2)]
+    with pytest.raises(RuntimeError, match="returned 1 vectors for 2 texts"):
+        embeddings.gemini_embed_batch(["a", "b"], client=Client(), max_attempts=1)
+
+
+def test_gemini_embed_batch_stops_after_bounded_503(monkeypatch):
+    class ServerError(Exception):
+        code = 503
+
+        def __str__(self):
+            return "503 UNAVAILABLE: service unavailable"
+
+    class Client:
+        class models:
+            @staticmethod
+            def embed_content(model, contents):
+                raise ServerError()
+
+    monkeypatch.setattr(embeddings.time, "sleep", lambda _: None)
+    with pytest.raises(ServerError):
+        embeddings.gemini_embed_batch(["a"], client=Client(), max_attempts=3)
+
+
+def test_gemini_embed_batch_treats_daily_429_as_quota(monkeypatch):
+    class RateError(Exception):
+        code = 429
+
+        def __str__(self):
+            return "429 RESOURCE_EXHAUSTED: quota reached per day"
+
+    class Client:
+        class models:
+            @staticmethod
+            def embed_content(model, contents):
+                raise RateError()
+
+    monkeypatch.setattr(embeddings.time, "sleep", lambda _: None)
+    with pytest.raises(QuotaExhausted):
+        embeddings.gemini_embed_batch(["a"], client=Client(), max_attempts=5)
+
+
+def test_embedding_service_uses_individual_fallback(tmp_path, monkeypatch):
+    service = embeddings.EmbeddingService(
+        mode="gemini",
+        model="m",
+        cache_dir=tmp_path,
+        batch_size=2,
+    )
+    service._client = object()
+    calls = []
+
+    def fake_batch(texts, model=None, client=None, max_attempts=5):
+        calls.append((list(texts), max_attempts))
+        if len(texts) == 2:
+            raise RuntimeError("embedding API returned 1 vectors for 2 texts")
+        return [(float(ord(texts[0])), 0.0)]
+
+    monkeypatch.setattr(embeddings, "gemini_embed_batch", fake_batch)
+    vectors = service.embed_many(["a", "b"])
+
+    assert vectors == [(97.0, 0.0), (98.0, 0.0)]
+    assert calls == [(["a", "b"], 5), (["a"], 3), (["b"], 3)]
+
+
+def test_embedding_service_shows_individual_fallback_progress(tmp_path, monkeypatch, capsys):
+    service = embeddings.EmbeddingService(
+        mode="gemini",
+        model="m",
+        cache_dir=tmp_path,
+        batch_size=2,
+    )
+    service._client = object()
+
+    def fake_batch(texts, model=None, client=None, max_attempts=5):
+        if len(texts) == 2:
+            raise RuntimeError("embedding API returned 1 vectors for 2 texts")
+        return [(1.0, 0.0)]
+
+    monkeypatch.setattr(embeddings, "gemini_embed_batch", fake_batch)
+    service.embed_many(["a", "b"])
+
+    output = capsys.readouterr().out
+    assert "batch mismatch" in output
+    assert "individual fallback: 2/2 texts" in output
+
+
+def test_entity_embeddings_file_is_reused(tmp_path):
+    path = tmp_path / "entity_embeddings.json"
+    embeddings.write_entity_embeddings({"ent:a": (0.1, 0.2)}, path)
+    assert embeddings.read_entity_embeddings(path) == {"ent:a": (0.1, 0.2)}
 
 
 def test_unknown_embedding_mode_is_rejected(tmp_path):
