@@ -285,8 +285,29 @@ def test_gemini_embed_batch_rejects_wrong_vector_count():
                     embeddings = [Item()]
                 return R()
 
-    with pytest.raises(RuntimeError, match="returned 1 vectors for 3 texts"):
-        embeddings.gemini_embed_batch(["a", "b", "c"], client=Client(), max_attempts=1)
+    vectors = embeddings.gemini_embed_batch(["a"], client=Client(), max_attempts=1)
+    assert vectors == [(0.1, 0.2)]
+
+
+def test_gemini_embed_batch_falls_back_for_one_vector_batch():
+    class Item:
+        values = [0.1, 0.2]
+
+    class Client:
+        class models:
+            calls = 0
+
+            @staticmethod
+            def embed_content(model, contents):
+                class R:
+                    embeddings = [Item()]
+
+                if isinstance(contents, list):
+                    R.embeddings = [Item()]
+                return R()
+
+    vectors = embeddings.gemini_embed_batch(["a", "b"], client=Client(), max_attempts=1)
+    assert vectors == [(0.1, 0.2), (0.1, 0.2)]
 
 
 def test_unknown_embedding_mode_is_rejected(tmp_path):

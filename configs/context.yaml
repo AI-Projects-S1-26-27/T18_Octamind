@@ -1,7 +1,8 @@
 # Role 6: context construction and answer generation.
 answer_model: gemini-3.5-flash-lite
 temperature: 0.0
-requests_per_minute: 1000
+requests_per_minute: 4000
+requests_per_day: 150000
 max_sources_per_edge: 2
 # The default shared comparison tokenizer is regex_wordpunct_v1. It is deterministic,
 # but not Gemini-native. Provider-reported usage is recorded separately after generation.

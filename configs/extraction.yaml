@@ -17,8 +17,9 @@ llm:
   model: gemini-3.5-flash-lite
   temperature: 0
   batch_size: 10                    # paragraphs per request (~10x fewer requests than 1)
-  workers: 32                       # parallel requests
-  requests_per_minute: 1000
+  workers: 8                        # 80 paragraphs in flight; keeps Flash-Lite TPM bursts bounded
+  requests_per_minute: 4000
+  requests_per_day: 150000
   max_attempts: 8                   # retries per-minute 429 / 5xx with exponential backoff;
                                     # a per-day quota error stops the run (re-run resumes)
   cache_dir: data/cache/extraction  # one JSON per prompt; delete to force re-extraction

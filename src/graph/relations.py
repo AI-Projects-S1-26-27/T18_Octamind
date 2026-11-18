@@ -510,6 +510,7 @@ def build_extractor(cfg: dict, mode: str):
             model, float(llm.get("temperature", 0.0)),
             thinking_level=llm.get("thinking_level"),
             requests_per_minute=llm.get("requests_per_minute"),
+            requests_per_day=llm.get("requests_per_day"),
             max_attempts=int(llm.get("max_attempts", 8)),
         )
         return LLMRelationExtractor(generate, model=model, cache_dir=llm.get("cache_dir", "data/cache/relations"))

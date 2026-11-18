@@ -26,8 +26,9 @@ relation:
 llm:
   model: gemini-3.5-flash-lite # same pinned model as configs/extraction.yaml
   temperature: 0
-  requests_per_minute: 1000
-  workers: 32
+  requests_per_minute: 4000
+  requests_per_day: 150000
+  workers: 8
   max_attempts: 8
   cache_dir: data/cache/relations
 
@@ -38,4 +39,5 @@ embedding:
   batch_size: 100
   mode: gemini                 # 'mock' only for offline tests: its vectors are hash noise, never use them for experiments
   use_entity_names: true       # embed "Barack Obama was born in Honolulu", not "ent:barack_obama was born in ent:honolulu"
-  requests_per_minute: 1000
+  requests_per_minute: 3000
+  requests_per_day: null       # unlimited

@@ -131,7 +131,27 @@ def gemini_embed_batch(
             time.sleep(2 ** attempt)
             continue
         if len(results) != len(texts):
-            raise RuntimeError(f"embedding API returned {len(results)} vectors for {len(texts)} texts")
+            # Some Gemini deployments/models return only one vector for a list.
+            # Fall back to one provider request per text rather than corrupting order.
+            if len(texts) == 1:
+                raise RuntimeError(
+                    f"embedding API returned {len(results)} vectors for {len(texts)} texts"
+                )
+            individual = []
+            for index, text in enumerate(texts, start=1):
+                one_response = client.models.embed_content(model=model, contents=text)
+                one_results = [
+                    tuple(float(v) for v in item.values)
+                    for item in one_response.embeddings
+                ]
+                if len(one_results) != 1:
+                    raise RuntimeError(
+                        f"embedding API returned {len(one_results)} vectors for 1 text"
+                    )
+                individual.append(one_results[0])
+                if index % 100 == 0 or index == len(texts):
+                    print(f"  individual fallback: {index}/{len(texts)} texts", flush=True)
+            return individual
         return results
 
     raise RuntimeError("unreachable")
@@ -149,6 +169,7 @@ class EmbeddingService:
         batch_size: int = 100,
         use_cache: Optional[bool] = None,
         requests_per_minute: Optional[float] = None,
+        requests_per_day: Optional[float] = None,
     ):
         if mode not in ("mock", "gemini"):
             raise ValueError(f"unknown embedding mode {mode!r}; choose 'mock' or 'gemini'")
@@ -158,7 +179,7 @@ class EmbeddingService:
         self.dimension = dimension
         self.batch_size = batch_size
         self.use_cache = use_cache if use_cache is not None else True
-        self.limiter = RateLimiter(requests_per_minute)
+        self.limiter = RateLimiter(requests_per_minute, requests_per_day)
         self._client = None
 
     @property
@@ -225,6 +246,7 @@ def service_from_config(cfg: dict, mode_override: Optional[str] = None) -> Embed
         dimension=int(emb_cfg.get("dimension", 64)),
         batch_size=int(emb_cfg.get("batch_size", 100)),
         requests_per_minute=emb_cfg.get("requests_per_minute"),
+        requests_per_day=emb_cfg.get("requests_per_day"),
     )
 
 

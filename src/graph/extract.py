@@ -345,16 +345,30 @@ class QuotaExhausted(RuntimeError):
 class RateLimiter:
     """At most ``per_minute`` call starts per minute, shared by all worker threads."""
 
-    def __init__(self, per_minute: Optional[float]):
+    def __init__(self, per_minute: Optional[float], per_day: Optional[float] = None):
         self.interval = 60.0 / per_minute if per_minute else 0.0
         self.next_at = 0.0
         self.lock = threading.Lock()
+        self.per_day = int(per_day) if per_day else None
+        self.day_started_at = None
+        self.day_calls = 0
 
     def wait(self) -> None:
-        if not self.interval:
-            return
         with self.lock:
             now = time.monotonic()
+            if self.per_day:
+                if self.day_started_at is None:
+                    self.day_started_at = now
+                elif now - self.day_started_at >= 86400:
+                    self.day_started_at = now
+                    self.day_calls = 0
+                if self.day_calls >= self.per_day:
+                    raise QuotaExhausted(
+                        f"configured daily API limit of {self.per_day} requests reached"
+                    )
+                self.day_calls += 1
+            if not self.interval:
+                return
             start = max(now, self.next_at)
             self.next_at = start + self.interval
         time.sleep(max(0.0, start - now))
@@ -365,7 +379,8 @@ def is_daily_quota_error(message: str) -> bool:
 
 
 def gemini_generate(model: str, temperature: float = 0.0, *, thinking_level: Optional[str] = None,
-                    requests_per_minute: Optional[float] = None, max_attempts: int = 8,
+                    requests_per_minute: Optional[float] = None,
+                    requests_per_day: Optional[float] = None, max_attempts: int = 8,
                     timeout_s: float = 180.0) -> Callable[[str], str]:
     """``generate`` callable backed by Gemini. Needs ``pip install google-genai`` and
     GEMINI_API_KEY in the environment or in the git-ignored .env.
@@ -391,7 +406,7 @@ def gemini_generate(model: str, temperature: float = 0.0, *, thinking_level: Opt
         response_mime_type="application/json",
         thinking_config=types.ThinkingConfig(thinking_level=thinking_level) if thinking_level else None,
     )
-    limiter = RateLimiter(requests_per_minute)
+    limiter = RateLimiter(requests_per_minute, requests_per_day)
     exhausted = threading.Event()
 
     def generate(prompt: str) -> str:
@@ -430,6 +445,7 @@ def build_extractor(cfg: dict):
             model, float(llm.get("temperature", 0.0)),
             thinking_level=llm.get("thinking_level"),
             requests_per_minute=llm.get("requests_per_minute"),
+            requests_per_day=llm.get("requests_per_day"),
             max_attempts=int(llm.get("max_attempts", 8)),
         )
         return LLMExtractor(generate, model=model, cache_dir=llm.get("cache_dir", "data/cache/extraction"))
