@@ -279,7 +279,8 @@ class EmbeddingService:
             )
 
         # Fetch missing in batches
-        for start_idx in range(0, len(missing_texts), self.batch_size):
+        total_missing = len(missing_texts)
+        for start_idx in range(0, total_missing, self.batch_size):
             batch = missing_texts[start_idx : start_idx + self.batch_size]
             batch_number = start_idx // self.batch_size + 1
             batch_count = math.ceil(len(missing_texts) / self.batch_size)
@@ -352,6 +353,15 @@ class EmbeddingService:
                 f"{remaining} left",
                 flush=True,
             )
+
+            done = start_idx + len(batch)
+            if total_missing >= 50 and (
+                done == len(batch)
+                or (done // self.batch_size) % 10 == 0
+                or done == total_missing
+            ):
+                pct = (done / total_missing) * 100
+                print(f"  embedded {done}/{total_missing} ({pct:.1f}%)...", flush=True)
 
         if any(r is None for r in results):
             raise RuntimeError("embedding failed for some texts")
