@@ -470,12 +470,24 @@ def build_automatic_graph(
             unique_paragraphs.setdefault((p.id, p.text), p)
 
     tasks = [(p, mentions_by_pid[p.id]) for p in unique_paragraphs.values() if mentions_by_pid.get(p.id)]
+    print(f"  starting relationship extraction: {len(tasks)} paragraphs, {workers} workers", flush=True)
+    if not tasks:
+        print("  no paragraphs have mentions; check extraction output", flush=True)
+        return []
 
     if workers > 1:
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            found_lists = list(pool.map(lambda t: extractor.extract(*t), tasks))
+            found_lists = []
+            for index, found in enumerate(pool.map(lambda t: extractor.extract(*t), tasks), start=1):
+                found_lists.append(found)
+                if index % 10 == 0 or index == len(tasks):
+                    print(f"  {index}/{len(tasks)} paragraphs", flush=True)
     else:
-        found_lists = [extractor.extract(*t) for t in tasks]
+        found_lists = []
+        for index, task in enumerate(tasks, start=1):
+            found_lists.append(extractor.extract(*task))
+            if index % 10 == 0 or index == len(tasks):
+                print(f"  {index}/{len(tasks)} paragraphs", flush=True)
 
     raw_relations = [r for found in found_lists for r in found if r.confidence >= min_confidence]
     return aggregate_relations(raw_relations)
@@ -511,6 +523,7 @@ def run(
     out_name: Optional[str] = None,
 ) -> dict:
     """Run automatic relationship discovery and graph construction."""
+    print(f"[relations] starting (config={config_path})", flush=True)
     with open(config_path, encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
 
@@ -525,6 +538,7 @@ def run(
     rel_cfg = cfg.get("relation", {})
     min_confidence = float(rel_cfg.get("min_confidence", 0.0))
     workers = int((cfg.get("llm") or {}).get("workers", 1)) if extractor_mode == "llm" else 1
+    print(f"[relations] mode={extractor_mode}, datasets={','.join(datasets)}, workers={workers}", flush=True)
 
     manifest = {"config": cfg, "mode": extractor_mode, "datasets": {}}
 
@@ -533,8 +547,9 @@ def run(
     for ds in datasets:
         in_path = processed_dir / f"{ds}_dev.jsonl"
         mentions_path = extraction_dir / ds / "mentions.jsonl"
+        print(f"[{ds}] loading records and mentions", flush=True)
         if not in_path.exists() or not mentions_path.exists():
-            print(f"Skipping {ds}: missing input files ({in_path} or {mentions_path}).")
+            print(f"[{ds}] missing input files ({in_path} or {mentions_path}).", flush=True)
             continue
 
         records = read_question_records(in_path)
@@ -569,6 +584,7 @@ def run(
     manifest_path = out_dir / f"manifest_{extractor_mode}.json"
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
+    print(f"[relations] wrote manifest -> {manifest_path}", flush=True)
 
     return manifest
 
