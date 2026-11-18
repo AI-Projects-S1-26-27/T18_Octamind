@@ -263,9 +263,35 @@ class EmbeddingService:
                 missing_indices.append(i)
                 missing_texts.append(t)
 
+        cached_count = len(texts) - len(missing_texts)
+        if len(missing_texts):
+            batch_count = math.ceil(len(missing_texts) / self.batch_size)
+            print(
+                f"  embedding progress: {cached_count}/{len(texts)} reused from cache, "
+                f"{len(missing_texts)} to fetch in {batch_count} {self.mode} batches "
+                f"(batch size {self.batch_size})",
+                flush=True,
+            )
+        elif self.use_cache:
+            print(
+                f"  embedding progress: {cached_count}/{len(texts)} reused from cache",
+                flush=True,
+            )
+
         # Fetch missing in batches
         for start_idx in range(0, len(missing_texts), self.batch_size):
             batch = missing_texts[start_idx : start_idx + self.batch_size]
+            batch_number = start_idx // self.batch_size + 1
+            batch_count = math.ceil(len(missing_texts) / self.batch_size)
+            batch_done_before = start_idx
+            batch_done_after = min(start_idx + len(batch), len(missing_texts))
+            print(
+                f"  embedding batch {batch_number}/{batch_count}: "
+                f"{batch_done_before}/{len(missing_texts)} fetched, "
+                f"{len(missing_texts) - batch_done_before} left; "
+                f"processing {len(batch)} texts",
+                flush=True,
+            )
             if self.mode == "mock":
                 batch_vectors = [mock_embed(t, dim=self.dimension) for t in batch]
             else:
@@ -318,6 +344,14 @@ class EmbeddingService:
                 results[orig_idx] = vec
                 if self.use_cache:
                     self.cache.put(self.model, t, vec)
+
+            remaining = len(missing_texts) - batch_done_after
+            print(
+                f"  embedding batch {batch_number}/{batch_count} complete: "
+                f"{batch_done_after}/{len(missing_texts)} fetched, "
+                f"{remaining} left",
+                flush=True,
+            )
 
         if any(r is None for r in results):
             raise RuntimeError("embedding failed for some texts")

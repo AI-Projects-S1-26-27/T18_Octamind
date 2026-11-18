@@ -85,6 +85,23 @@ def test_embedding_service_batch_and_cache():
         assert cached_vectors == vectors
 
 
+def test_embedding_service_prints_batch_progress(capsys):
+    with tempfile.TemporaryDirectory() as tmpdir:
+        service = EmbeddingService(
+            mode="mock",
+            cache_dir=tmpdir,
+            dimension=32,
+            batch_size=2,
+        )
+        service.embed_many(["apple", "banana", "cherry"])
+        output = capsys.readouterr().out
+
+        assert "3 to fetch in 2 mock batches" in output
+        assert "embedding batch 1/2" in output
+        assert "embedding batch 2/2 complete" in output
+        assert "0 left" in output
+
+
 def test_write_and_read_entity_embeddings():
     embs = {
         "ent:apple": (0.1, 0.2, 0.3),
