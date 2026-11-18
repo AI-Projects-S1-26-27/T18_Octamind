@@ -28,7 +28,7 @@ INSTRUCTIONS:
 
 
 def parse_answer_response(response: str) -> dict[str, Any]:
-    """Parse the expected JSON answer; tolerate a single surrounding code fence."""
+    """Parse the expected JSON answer; tolerate fences and extra response text."""
     if not isinstance(response, str):
         raise TypeError("response must be a string")
     text = response.strip()
@@ -36,7 +36,28 @@ def parse_answer_response(response: str) -> dict[str, Any]:
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise ValueError(f"answer model did not return valid JSON: {exc}") from exc
+        decoder = json.JSONDecoder()
+        payload = None
+        for index, char in enumerate(text):
+            if char not in "{[":
+                continue
+            try:
+                candidate, _ = decoder.raw_decode(text, index)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(candidate, dict):
+                payload = candidate
+                break
+            if isinstance(candidate, list):
+                payload = next((item for item in candidate if isinstance(item, dict)), None)
+                if payload is not None:
+                    break
+        if payload is None:
+            raise ValueError(f"answer model did not return valid JSON: {exc}") from exc
+    if isinstance(payload, str):
+        payload = {"answer": payload}
+    if isinstance(payload, list):
+        payload = next((item for item in payload if isinstance(item, dict)), None)
     if not isinstance(payload, dict):
         raise ValueError("answer model response must be a JSON object")
     answer = payload.get("answer")

@@ -49,6 +49,22 @@ class GeminiAnswerer:
         config = self._types.GenerateContentConfig(
             temperature=self.temperature,
             response_mime_type="application/json",
+            response_json_schema={
+                "type": "object",
+                "properties": {
+                    "answer": {"type": "string"},
+                    "supporting_paragraph_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "evidence_sufficiency": {
+                        "type": "string",
+                        "enum": ["sufficient", "insufficient"],
+                    },
+                },
+                "required": ["answer", "supporting_paragraph_ids", "evidence_sufficiency"],
+                "additionalProperties": False,
+            },
         )
         self._wait_for_slot()
         response = self.client.models.generate_content(

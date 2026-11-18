@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import yaml
@@ -19,7 +20,7 @@ from src.common.tokenization import RegexTokenCounter
 
 def answer_file(input_path: str, output_path: str, model: str = "gemini-3.5-flash-lite",
                 limit: int | None = None, answerer=None,
-                requests_per_minute: float = 1000):
+                requests_per_minute: float = 1000, concurrency: int = 16):
     rows = []
     with Path(input_path).open(encoding="utf-8") as handle:
         source = [json.loads(line) for line in handle if line.strip()]
@@ -28,7 +29,9 @@ def answer_file(input_path: str, output_path: str, model: str = "gemini-3.5-flas
     answerer = answerer or GeminiAnswerer(model=model, temperature=0.0,
                                          requests_per_minute=requests_per_minute)
     token_counter = RegexTokenCounter()
-    for index, row in enumerate(source, 1):
+
+    def generate_one(index_row):
+        index, row = index_row
         prompt = build_qa_prompt(row["question"], row.get("context", ""))
         row["prompt_tokens_shared"] = token_counter(prompt)
         started = time.perf_counter()
@@ -46,9 +49,20 @@ def answer_file(input_path: str, output_path: str, model: str = "gemini-3.5-flas
             "prompt_tokens_model_reported": generated.prompt_tokens,
             "output_tokens_model_reported": generated.output_tokens,
         })
-        rows.append(row)
-        if index % 25 == 0:
-            print(f"generated {index}/{len(source)} answers", flush=True)
+        return row
+
+    worker_count = max(1, min(concurrency, len(source)))
+    if worker_count == 1:
+        rows = [generate_one(item) for item in enumerate(source, 1)]
+    else:
+        print(f"generating {len(source)} answers with {worker_count} concurrent workers",
+              flush=True)
+        with ThreadPoolExecutor(max_workers=worker_count) as pool:
+            rows = list(pool.map(generate_one, enumerate(source, 1)))
+    for index in range(25, len(rows) + 1, 25):
+        print(f"generated {index}/{len(rows)} answers", flush=True)
+    if len(rows) % 25:
+        print(f"generated {len(rows)}/{len(rows)} answers", flush=True)
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     with out.open("w", encoding="utf-8") as handle:
@@ -65,8 +79,12 @@ def main(argv=None):
     parser.add_argument("--model", default="gemini-3.5-flash-lite")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--requests-per-minute", type=float)
+    parser.add_argument("--concurrency", type=int)
     args = parser.parse_args(argv)
     context_cfg = yaml.safe_load(Path("configs/context.yaml").read_text(encoding="utf-8")) or {}
+    concurrency = args.concurrency
+    if concurrency is None:
+        concurrency = int(context_cfg.get("concurrency", 16))
     answer_file(
         args.input,
         args.output,
@@ -74,6 +92,7 @@ def main(argv=None):
         limit=args.limit,
         requests_per_minute=args.requests_per_minute or float(
             context_cfg.get("requests_per_minute", 1000)),
+        concurrency=concurrency,
     )
     return 0
 

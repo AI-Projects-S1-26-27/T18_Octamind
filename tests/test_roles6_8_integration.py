@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 
 import yaml
 
@@ -9,7 +11,7 @@ from data.loaders.base import GoldEvidence, Paragraph, QuestionRecord
 from src.baselines.run import run_dataset as run_baselines
 from src.common.tokenization import RegexTokenCounter
 from src.context.answer_run import answer_file
-from src.context.answerer import CallableAnswerer
+from src.context.answerer import AnswerResult, CallableAnswerer
 from src.context.run import run_dataset as run_context
 from src.evaluation.run import run_evaluation
 from src.evaluation.splits import make_split
@@ -138,6 +140,53 @@ def test_role7_answer_runner_uses_shared_prompt_and_answerer(tmp_path):
     assert rows[0]["answer_latency_ms"] >= 0
     assert rows[0]["latency_ms"] >= rows[0]["answer_latency_ms"]
     assert output.exists()
+
+
+def test_role7_answer_runner_concurrently_generates_and_preserves_order(tmp_path):
+    source = tmp_path / "retrieval.jsonl"
+    output = tmp_path / "answers.jsonl"
+    records = [{
+        "question_id": f"q{i}",
+        "question": f"Question {i}",
+        "context": f"SOURCE [p{i}] Evidence {i}",
+        "retrieved_paragraph_ids": [f"p{i}"],
+    } for i in range(4)]
+    _write_jsonl(source, records)
+
+    lock = threading.Lock()
+    active = {"count": 0, "max": 0}
+
+    class ConcurrentAnswerer:
+        model = "test"
+        prompt_tokens = None
+        output_tokens = None
+
+        def generate(self, prompt):
+            with lock:
+                active["count"] += 1
+                active["max"] = max(active["max"], active["count"])
+            time.sleep(0.05)
+            question = prompt.split("QUESTION:\n", 1)[1].split("\n\nEVIDENCE:", 1)[0]
+            number = question.rsplit(" ", 1)[1]
+            with lock:
+                active["count"] -= 1
+            return AnswerResult(
+                json.dumps({
+                    "answer": number,
+                    "supporting_paragraph_ids": [f"p{number}"],
+                    "evidence_sufficiency": "sufficient",
+                }),
+                model="test",
+            )
+
+    rows = answer_file(
+        str(source),
+        str(output),
+        answerer=ConcurrentAnswerer(),
+        concurrency=4,
+    )
+    assert [row["answer"] for row in rows] == ["0", "1", "2", "3"]
+    assert active["max"] == 4
 
 
 def test_role8_split_aware_evaluation_selects_s2_on_tune_only(tmp_path):

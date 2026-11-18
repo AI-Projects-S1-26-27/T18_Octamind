@@ -62,5 +62,11 @@ def test_prompt_and_json_response_parser():
     parsed = parse_answer_response('```json\n{"answer":"London","supporting_paragraph_ids":["p1"],"evidence_sufficiency":"sufficient"}\n```')
     assert parsed["answer"] == "London"
     assert parsed["supporting_paragraph_ids"] == ["p1"]
+    parsed = parse_answer_response('Here is the answer:\n{"answer":"London","supporting_paragraph_ids":["p1"],"evidence_sufficiency":"sufficient"}')
+    assert parsed["answer"] == "London"
+    parsed = parse_answer_response('"London"')
+    assert parsed["answer"] == "London"
+    parsed = parse_answer_response('[{"answer":"London","supporting_paragraph_ids":["p1"],"evidence_sufficiency":"sufficient"}]')
+    assert parsed["answer"] == "London"
     with pytest.raises(ValueError, match="valid JSON"):
         parse_answer_response("not json")
