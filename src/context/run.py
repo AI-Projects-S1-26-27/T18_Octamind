@@ -13,6 +13,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 
+import yaml
+
 from data.loaders.base import read_question_records
 from src.common.tokenization import RegexTokenCounter
 from src.context.answerer import GeminiAnswerer
@@ -72,6 +74,7 @@ def run_dataset(
     split_manifest: str | None = None,
     split_part: str | None = None,
     answerer=None,
+    requests_per_minute: float = 1000,
 ) -> dict:
     cfg.validate()
     embedding_mode = _validate_embedding_modes(dataset, query_dir, graph_dir, cfg.path_relevance_mode)
@@ -100,7 +103,8 @@ def run_dataset(
         path_embed_many_fn = get_service().embed_many
 
     if answer_mode == "gemini" and answerer is None:
-        answerer = GeminiAnswerer(answer_model, temperature=0.0)
+        answerer = GeminiAnswerer(answer_model, temperature=0.0,
+                                 requests_per_minute=requests_per_minute)
     if answer_mode == "none":
         answerer = None
     output_rows = []
@@ -245,10 +249,12 @@ def main(argv=None) -> int:
     parser.add_argument("--out-dir", default="results/context")
     parser.add_argument("--answer-mode", choices=["none", "gemini"], default="none")
     parser.add_argument("--answer-model", default="gemini-3.5-flash-lite")
+    parser.add_argument("--requests-per-minute", type=float)
     parser.add_argument("--max-sources-per-edge", type=int, default=2)
     parser.add_argument("--path-relevance-mode", choices=["text", "mean_edge"])
     parser.add_argument("--epsilon", type=float)
     args = parser.parse_args(argv)
+    context_cfg = yaml.safe_load(Path("configs/context.yaml").read_text(encoding="utf-8")) or {}
     cfg = Config.from_yaml(args.config)
     if args.path_relevance_mode is not None:
         cfg.path_relevance_mode = args.path_relevance_mode
@@ -260,7 +266,9 @@ def main(argv=None) -> int:
                 split_manifest=args.split_manifest, split_part=args.split_part,
                 processed_dir=args.processed_dir, query_dir=args.query_dir,
                 graph_dir=args.graph_dir, extraction_dir=args.extraction_dir,
-                out_dir=args.out_dir)
+                out_dir=args.out_dir,
+                requests_per_minute=args.requests_per_minute or float(
+                    context_cfg.get("requests_per_minute", 1000)))
     return 0
 
 

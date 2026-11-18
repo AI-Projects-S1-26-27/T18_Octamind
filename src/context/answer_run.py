@@ -10,19 +10,23 @@ import json
 import time
 from pathlib import Path
 
+import yaml
+
 from src.context.answerer import GeminiAnswerer
 from src.context.prompt import build_qa_prompt, parse_answer_response
 from src.common.tokenization import RegexTokenCounter
 
 
 def answer_file(input_path: str, output_path: str, model: str = "gemini-3.5-flash-lite",
-                limit: int | None = None, answerer=None):
+                limit: int | None = None, answerer=None,
+                requests_per_minute: float = 1000):
     rows = []
     with Path(input_path).open(encoding="utf-8") as handle:
         source = [json.loads(line) for line in handle if line.strip()]
     if limit is not None:
         source = source[:limit]
-    answerer = answerer or GeminiAnswerer(model=model, temperature=0.0)
+    answerer = answerer or GeminiAnswerer(model=model, temperature=0.0,
+                                         requests_per_minute=requests_per_minute)
     token_counter = RegexTokenCounter()
     for index, row in enumerate(source, 1):
         prompt = build_qa_prompt(row["question"], row.get("context", ""))
@@ -60,8 +64,17 @@ def main(argv=None):
     parser.add_argument("--output", required=True)
     parser.add_argument("--model", default="gemini-3.5-flash-lite")
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--requests-per-minute", type=float)
     args = parser.parse_args(argv)
-    answer_file(args.input, args.output, model=args.model, limit=args.limit)
+    context_cfg = yaml.safe_load(Path("configs/context.yaml").read_text(encoding="utf-8")) or {}
+    answer_file(
+        args.input,
+        args.output,
+        model=args.model,
+        limit=args.limit,
+        requests_per_minute=args.requests_per_minute or float(
+            context_cfg.get("requests_per_minute", 1000)),
+    )
     return 0
 
 
