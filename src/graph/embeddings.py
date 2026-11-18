@@ -161,9 +161,15 @@ def gemini_embed_batch(
         return []
     client = client or make_gemini_client()
 
+    try:
+        from google.genai import types
+        contents_payload = [types.Content(parts=[types.Part.from_text(text=t)]) for t in texts]
+    except Exception:
+        contents_payload = texts
+
     for attempt in range(max_attempts):
         try:
-            response = client.models.embed_content(model=model, contents=texts)
+            response = client.models.embed_content(model=model, contents=contents_payload)
             results = [tuple(float(v) for v in item.values) for item in response.embeddings]
         except Exception as exc:
             message = str(exc)
@@ -177,12 +183,21 @@ def gemini_embed_batch(
                 raise
             if not transient:
                 raise
+
+            delay = float(min(8.0, 2.0 ** attempt) + random.random())
+            if code == 429 or "resource exhausted" in message.lower():
+                m = re.search(r"retry in (\d+(?:\.\d+)?)s", message) or re.search(r"'retryDelay':\s*'(\d+)s'", message)
+                if m:
+                    delay = float(m.group(1)) + 2.0
+                else:
+                    delay = max(delay, 60.0)
+
             print(
                 f"  embedding retry {attempt + 1}/{max_attempts}: "
-                f"{code if code is not None else 'transient error'}",
+                f"{code if code is not None else 'transient error'} (sleeping {delay:.1f}s)",
                 flush=True,
             )
-            time.sleep(min(8.0, 2.0 ** attempt) + random.random())
+            time.sleep(delay)
             continue
         if len(results) != len(texts):
             raise RuntimeError(
