@@ -60,6 +60,11 @@ def _variant_name(row: dict) -> str:
     return system if not params else f"{system} | " + json.dumps(params, sort_keys=True, separators=(",", ":"))
 
 
+def _mean(values: list) -> float | None:
+    vals = [value for value in values if value is not None]
+    return sum(vals) / len(vals) if vals else None
+
+
 def evaluate_rows(
     rows: list[dict],
     records: list,

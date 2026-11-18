@@ -72,11 +72,16 @@ def test_evaluate_rows_adds_metrics():
     record = _record()
     row = {"question_id": "q1", "system": "S6", "answer": "London",
            "retrieved_paragraph_ids": ["p1"], "gold_paragraph_ids": ["p1"],
-           "answer_gold": "London", "selected_edges": []}
+           "answer_gold": "London", "selected_edges": [],
+           "seed_distractor_edge_count": 3}
     scored, summary = evaluate_rows([row], [record])
     assert scored[0]["exact_match"] == 1.0
     assert scored[0]["evidence_recall"] == 1.0
     assert summary["questions"] == 1
+    distractor = summary["variants"][list(summary["variants"])[0]]["distractor_analysis"]
+    assert distractor["high_distractor_questions"] == 1
+    assert distractor["other_questions"] == 0
+    assert distractor["other_mean_token_f1"] is None
 
 
 def test_write_corrupted_graphs_creates_isolated_loadable_graph(tmp_path):

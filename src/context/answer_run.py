@@ -8,7 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import yaml
@@ -57,8 +57,26 @@ def answer_file(input_path: str, output_path: str, model: str = "gemini-3.5-flas
     else:
         print(f"generating {len(source)} answers with {worker_count} concurrent workers",
               flush=True)
+        indexed_rows = {}
+        temp_output = Path(output_path).with_name(f"{Path(output_path).name}.part")
         with ThreadPoolExecutor(max_workers=worker_count) as pool:
-            rows = list(pool.map(generate_one, enumerate(source, 1)))
+            futures = {
+                pool.submit(generate_one, item): item[0]
+                for item in enumerate(source, 1)
+            }
+            completed = 0
+            for future in as_completed(futures):
+                row = future.result()
+                index = futures[future]
+                indexed_rows[index] = row
+                completed += 1
+                if completed % 25 == 0:
+                    print(f"generated {completed}/{len(source)} answers", flush=True)
+                    with temp_output.open("w", encoding="utf-8") as handle:
+                        for ordered_index in sorted(indexed_rows):
+                            handle.write(json.dumps(indexed_rows[ordered_index], ensure_ascii=False) + "\n")
+        rows = [indexed_rows[index] for index in range(1, len(source) + 1)]
+        temp_output.unlink(missing_ok=True)
     for index in range(25, len(rows) + 1, 25):
         print(f"generated {index}/{len(rows)} answers", flush=True)
     if len(rows) % 25:

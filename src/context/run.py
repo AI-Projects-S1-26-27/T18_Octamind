@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
@@ -75,6 +76,7 @@ def run_dataset(
     split_part: str | None = None,
     answerer=None,
     requests_per_minute: float = 1000,
+    concurrency: int = 16,
 ) -> dict:
     cfg.validate()
     embedding_mode = _validate_embedding_modes(dataset, query_dir, graph_dir, cfg.path_relevance_mode)
@@ -178,11 +180,27 @@ def run_dataset(
             "tokenizer": token_counter.name,
             "answer_mode": answer_mode,
         }
-        answer_latency_ms = 0.0
-        if answerer is not None:
-            answer_started = time.perf_counter()
-            generated = answerer.generate(prompt)
-            answer_latency_ms = (time.perf_counter() - answer_started) * 1000.0
+        row["traversal_latency_ms"] = round(traversal_latency_ms, 3)
+        row["selection_and_serialization_latency_ms"] = round(selection_and_serialization_ms, 3)
+        row["retrieval_latency_ms"] = round(traversal_latency_ms + selection_and_serialization_ms, 3)
+        row["answer_latency_ms"] = None
+        row["latency_ms"] = round((time.perf_counter() - question_started) * 1000.0, 3)
+        output_rows.append(row)
+        if index % 50 == 0:
+            print(f"[{dataset}/{kind}] prepared {index}/{len(records)} questions", flush=True)
+
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    stem = f"{dataset}_{kind}_{tag}"
+    jsonl_path = out / f"{stem}.jsonl"
+    temp_jsonl_path = out / f"{stem}.jsonl.part"
+
+    if answerer is not None:
+        def generate_answer(index_row):
+            index, row = index_row
+            started = time.perf_counter()
+            generated = answerer.generate(row["prompt"])
+            elapsed_ms = (time.perf_counter() - started) * 1000.0
             parsed = parse_answer_response(generated.response_text)
             allowed_ids = set(row["retrieved_paragraph_ids"])
             cited = [pid for pid in parsed["supporting_paragraph_ids"] if pid in allowed_ids]
@@ -193,23 +211,46 @@ def run_dataset(
                 "answer_model": generated.model,
                 "prompt_tokens_model_reported": generated.prompt_tokens,
                 "output_tokens_model_reported": generated.output_tokens,
+                "answer_latency_ms": round(elapsed_ms, 3),
+                "latency_ms": round(row["retrieval_latency_ms"] + elapsed_ms, 3),
             })
-        row["traversal_latency_ms"] = round(traversal_latency_ms, 3)
-        row["selection_and_serialization_latency_ms"] = round(selection_and_serialization_ms, 3)
-        row["retrieval_latency_ms"] = round(traversal_latency_ms + selection_and_serialization_ms, 3)
-        row["answer_latency_ms"] = round(answer_latency_ms, 3) if answerer is not None else None
-        row["latency_ms"] = round((time.perf_counter() - question_started) * 1000.0, 3)
-        output_rows.append(row)
-        if index % 50 == 0:
-            print(f"[{dataset}/{kind}] prepared {index}/{len(records)} questions", flush=True)
+            return index, row
 
-    out = Path(out_dir)
-    out.mkdir(parents=True, exist_ok=True)
-    stem = f"{dataset}_{kind}_{tag}"
-    jsonl_path = out / f"{stem}.jsonl"
+        worker_count = max(1, min(concurrency, len(output_rows)))
+        if worker_count == 1:
+            indexed_rows = {
+                index: row
+                for index, row in (
+                    generate_answer((index, row))
+                    for index, row in enumerate(output_rows, 1)
+                )
+            }
+        else:
+            print(f"[{dataset}/{kind}] generating {len(output_rows)} answers with {worker_count} concurrent workers", flush=True)
+            indexed_rows = {}
+            with ThreadPoolExecutor(max_workers=worker_count) as pool:
+                futures = {
+                    pool.submit(generate_answer, (index, row)): index
+                    for index, row in enumerate(output_rows, 1)
+                }
+                completed = 0
+                for future in as_completed(futures):
+                    index, row = future.result()
+                    indexed_rows[index] = row
+                    completed += 1
+                    if completed % 25 == 0:
+                        print(f"[{dataset}/{kind}] generated {completed}/{len(output_rows)} answers", flush=True)
+                        with temp_jsonl_path.open("w", encoding="utf-8") as handle:
+                            for ordered_index in sorted(indexed_rows):
+                                handle.write(json.dumps(indexed_rows[ordered_index], ensure_ascii=False) + "\n")
+        output_rows = [indexed_rows[index] for index in range(1, len(output_rows) + 1)]
+
+        print(f"[{dataset}/{kind}] generated {len(output_rows)} answers", flush=True)
+
     with jsonl_path.open("w", encoding="utf-8") as handle:
         for row in output_rows:
             handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+    temp_jsonl_path.unlink(missing_ok=True)
     summary = {
         "dataset": dataset, "kind": kind, "tag": tag, "answer_mode": answer_mode,
         "answer_model": answer_model if answer_mode == "gemini" else None,
@@ -250,11 +291,15 @@ def main(argv=None) -> int:
     parser.add_argument("--answer-mode", choices=["none", "gemini"], default="none")
     parser.add_argument("--answer-model", default="gemini-3.5-flash-lite")
     parser.add_argument("--requests-per-minute", type=float)
+    parser.add_argument("--concurrency", type=int)
     parser.add_argument("--max-sources-per-edge", type=int, default=2)
     parser.add_argument("--path-relevance-mode", choices=["text", "mean_edge"])
     parser.add_argument("--epsilon", type=float)
     args = parser.parse_args(argv)
     context_cfg = yaml.safe_load(Path("configs/context.yaml").read_text(encoding="utf-8")) or {}
+    concurrency = args.concurrency
+    if concurrency is None:
+        concurrency = int(context_cfg.get("concurrency", 16))
     cfg = Config.from_yaml(args.config)
     if args.path_relevance_mode is not None:
         cfg.path_relevance_mode = args.path_relevance_mode
@@ -268,7 +313,8 @@ def main(argv=None) -> int:
                 graph_dir=args.graph_dir, extraction_dir=args.extraction_dir,
                 out_dir=args.out_dir,
                 requests_per_minute=args.requests_per_minute or float(
-                    context_cfg.get("requests_per_minute", 1000)))
+                    context_cfg.get("requests_per_minute", 1000)),
+                concurrency=concurrency)
     return 0
 
 

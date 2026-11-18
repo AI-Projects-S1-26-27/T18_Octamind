@@ -11,7 +11,7 @@ from data.loaders.base import GoldEvidence, Paragraph, QuestionRecord
 from src.baselines.run import run_dataset as run_baselines
 from src.common.tokenization import RegexTokenCounter
 from src.context.answer_run import answer_file
-from src.context.answerer import AnswerResult, CallableAnswerer
+from src.context.answerer import AnswerCache, AnswerResult, CallableAnswerer
 from src.context.run import run_dataset as run_context
 from src.evaluation.run import run_evaluation
 from src.evaluation.splits import make_split
@@ -120,6 +120,38 @@ def test_role7_s1_s2_s3_runner_end_to_end(tmp_path, monkeypatch):
     assert summary["questions"] == 1
     assert all(row["context_tokens"] >= 0 for row in rows)
     assert all(row["retrieval_latency_ms"] >= 0 for row in rows)
+
+
+def test_answer_cache_reuses_exact_model_and_prompt(tmp_path):
+    cache = AnswerCache(tmp_path)
+    result = AnswerResult("cached", prompt_tokens=12, output_tokens=3, model="test-model")
+    cache.put("test-model", "same prompt", result)
+
+    cached = cache.get("test-model", "same prompt")
+    assert cached is not None
+
+
+def test_answer_cache_concurrent_writes_are_safe(tmp_path):
+    import concurrent.futures
+
+    cache = AnswerCache(tmp_path)
+
+    def write_answer(value):
+        cache.put(
+            "test-model",
+            "same prompt",
+            AnswerResult(str(value), prompt_tokens=12, output_tokens=3, model="test-model"),
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(write_answer, range(8)))
+
+    cached = cache.get("test-model", "same prompt")
+    assert cached is not None
+    assert cached.response_text in {str(value) for value in range(8)}
+    assert cached.prompt_tokens == 12
+    assert cache.get("other-model", "same prompt") is None
+    assert cache.get("test-model", "different prompt") is None
 
 
 def test_role7_answer_runner_uses_shared_prompt_and_answerer(tmp_path):
