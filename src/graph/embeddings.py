@@ -263,8 +263,10 @@ class EmbeddingService:
                 missing_indices.append(i)
                 missing_texts.append(t)
 
+        total_missing = len(missing_texts)
+
         # Fetch missing in batches
-        for start_idx in range(0, len(missing_texts), self.batch_size):
+        for start_idx in range(0, total_missing, self.batch_size):
             batch = missing_texts[start_idx : start_idx + self.batch_size]
             if self.mode == "mock":
                 batch_vectors = [mock_embed(t, dim=self.dimension) for t in batch]
@@ -318,6 +320,13 @@ class EmbeddingService:
                 results[orig_idx] = vec
                 if self.use_cache:
                     self.cache.put(self.model, t, vec)
+
+            processed = start_idx + len(batch)
+            if total_missing >= 200 and (processed % 1000 == 0 or processed == total_missing):
+                print(
+                    f"  progress: {processed}/{total_missing} embedded ({processed * 100 // total_missing}%)",
+                    flush=True,
+                )
 
         if any(r is None for r in results):
             raise RuntimeError("embedding failed for some texts")
